@@ -1,8 +1,8 @@
 """Flag configuration rows.
 
 Creating a flag or an environment writes a disabled configuration here.
-Reads return the stored documents. This module does not evaluate flags
-and does not commit.
+A targeting replace updates one row when the stored version still matches.
+This module does not evaluate flags and does not commit.
 """
 
 from collections.abc import Mapping
@@ -51,6 +51,17 @@ class FlagConfigSummaryRow:
     version: int
 
 
+@dataclass(frozen=True)
+class PrerequisiteListRow:
+    """The prerequisite list of one flag in one environment.
+
+    flag_key is the public key. prerequisites is the parsed JSON list.
+    """
+
+    flag_key: str
+    prerequisites: object
+
+
 def list_configs(connection: Connection, flag_id: int) -> list[FlagConfigRow]:
     """Return every environment configuration for flag_id, ordered by environment key.
 
@@ -75,6 +86,38 @@ def list_configs(connection: Connection, flag_id: int) -> list[FlagConfigRow]:
         (flag_id,),
     ).fetchall()
     return [_config_row(row) for row in rows]
+
+
+def find_config(
+    connection: Connection,
+    flag_id: int,
+    environment_id: int,
+) -> FlagConfigRow | None:
+    """Return one flag's configuration in one environment.
+
+    Returns None when that pair has no config row. Raises StorageError when
+    a JSON column is not valid JSON. Does not commit.
+    """
+    row = connection.execute(
+        """
+        SELECT environments.`key` AS environment_key,
+               flag_configs.enabled,
+               flag_configs.off_variation,
+               flag_configs.fallthrough_json,
+               flag_configs.rules_json,
+               flag_configs.targets_json,
+               flag_configs.prerequisites_json,
+               flag_configs.version
+          FROM flag_configs
+          JOIN environments ON environments.id = flag_configs.environment_id
+         WHERE flag_configs.flag_id = ?
+           AND flag_configs.environment_id = ?
+        """,
+        (flag_id, environment_id),
+    ).fetchone()
+    if row is None:
+        return None
+    return _config_row(row)
 
 
 def find_config_summary(
@@ -125,6 +168,86 @@ def list_flag_ids(connection: Connection, project_id: int) -> list[int]:
         (project_id,),
     ).fetchall()
     return [int(row["id"]) for row in rows]
+
+
+def list_environment_prerequisites(
+    connection: Connection,
+    environment_id: int,
+) -> list[PrerequisiteListRow]:
+    """Return each flag's prerequisite list in one environment.
+
+    An environment with no configs returns an empty list. Raises
+    StorageError when a JSON column is not valid JSON. Does not commit.
+    The rows are the stored lists; the service overlays the list it is
+    about to write before it looks for a cycle.
+    """
+    rows = connection.execute(
+        """
+        SELECT flags.`key` AS flag_key,
+               flag_configs.prerequisites_json
+          FROM flag_configs
+          JOIN flags ON flags.id = flag_configs.flag_id
+         WHERE flag_configs.environment_id = ?
+         ORDER BY flags.`key`
+        """,
+        (environment_id,),
+    ).fetchall()
+    loaded: list[PrerequisiteListRow] = []
+    for row in rows:
+        loaded.append(
+            PrerequisiteListRow(
+                flag_key=str(row["flag_key"]),
+                prerequisites=load_json_text(row["prerequisites_json"]),
+            )
+        )
+    return loaded
+
+
+def update_config(
+    connection: Connection,
+    flag_id: int,
+    environment_id: int,
+    enabled: int,
+    off_variation: int,
+    fallthrough_json: str,
+    rules_json: str,
+    targets_json: str,
+    prerequisites_json: str,
+    version: int,
+) -> int:
+    """Replace one configuration when its stored version is still version.
+
+    version is the version the caller read. The stored version becomes that
+    value plus one. Returns the number of rows changed. Zero means the
+    stored version moved and the service raises Conflict. Does not commit.
+    """
+    cursor = connection.execute(
+        """
+        UPDATE flag_configs
+           SET enabled = ?,
+               off_variation = ?,
+               fallthrough_json = ?,
+               rules_json = ?,
+               targets_json = ?,
+               prerequisites_json = ?,
+               version = version + 1
+         WHERE flag_id = ?
+           AND environment_id = ?
+           AND version = ?
+        """,
+        (
+            enabled,
+            off_variation,
+            fallthrough_json,
+            rules_json,
+            targets_json,
+            prerequisites_json,
+            flag_id,
+            environment_id,
+            version,
+        ),
+    )
+    return cursor.rowcount
 
 
 def insert_disabled_config(

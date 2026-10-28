@@ -10,6 +10,7 @@ from api.flags import create_flag, get_flag, list_flags, patch_flag
 from api.health import get_health
 from api.projects import create_project, get_project, list_projects
 from api.request import Request, Response
+from api.targeting import get_targeting, replace_targeting
 from domain.errors import Forbidden, StorageError
 from domain.models.principal import KIND_MANAGEMENT, KIND_SDK, Principal
 from repositories.db import Connection
@@ -67,7 +68,7 @@ def _management_route(
     principal: Principal | None,
     connection: Connection | None,
 ) -> Response:
-    """Dispatch a project or environment path, or 404.
+    """Dispatch a project, environment, flag, or targeting path, or 404.
 
     A path this module knows requires a session. A missing session raises
     StorageError. Does not authenticate and does not commit.
@@ -93,6 +94,15 @@ def _management_route(
         return _flags_collection(request, session[0], session[1], project_key)
     if len(parts) == 6 and parts[4] == "flags":
         return _one_flag(request, session[0], session[1], project_key, parts[5])
+    if len(parts) == 8 and parts[4] == "flags" and parts[6] == "environments":
+        return _flag_environment(
+            request,
+            session[0],
+            session[1],
+            project_key,
+            parts[5],
+            parts[7],
+        )
     return route_not_found()
 
 
@@ -162,6 +172,33 @@ def _one_flag(
     if request.method == "PATCH":
         return patch_flag(principal, connection, request, project_key, flag_key)
     return method_not_allowed("GET or PATCH")
+
+
+def _flag_environment(
+    request: Request,
+    principal: Principal,
+    connection: Connection,
+    project_key: str,
+    flag_key: str,
+    environment_key: str,
+) -> Response:
+    """Handle one flag's targeting in one environment.
+
+    GET fetches and PUT replaces the whole document. Any other method is
+    405. Does not commit.
+    """
+    if request.method == "GET":
+        return get_targeting(principal, connection, project_key, flag_key, environment_key)
+    if request.method == "PUT":
+        return replace_targeting(
+            principal,
+            connection,
+            request,
+            project_key,
+            flag_key,
+            environment_key,
+        )
+    return method_not_allowed("GET or PUT")
 
 
 def _session(

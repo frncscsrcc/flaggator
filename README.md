@@ -44,4 +44,4 @@ Dependency direction is one way: `api` → `domain services` → `repositories`.
 
 ## Status
 
-v1 implementation has started. The connection layer, schema migrations, in-memory cache, GET /health, management tokens, projects, environments, and flags are in place. `python -m main bootstrap` creates a management token. The process does not listen for requests yet. The license is not chosen yet.
+v1 implementation has started. The connection layer, schema migrations, in-memory cache, GET /health, management tokens, projects, environments, flags, and per-environment targeting are in place. `python -m main bootstrap` creates a management token. The process does not listen for requests yet. The license is not chosen yet.

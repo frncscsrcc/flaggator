@@ -129,6 +129,8 @@ One environment's configuration is replaced as a whole document. Partial patches
 
 `PUT` is idempotent only when replayed with the same version and the same body against the same stored version: the second call conflicts, because the version has moved. Clients retry by reading again. That is the concurrency rule, and it is preferable to a silent overwrite.
 
+The response document is the stored configuration: `enabled`, `off_variation`, `fallthrough`, `rules`, `targets`, `prerequisites`, and `version`. It does not repeat the environment key, which is already in the path. A rule `id` is omitted on create; the service assigns it and returns it. Sending a stored id keeps that rule. A rollout omits `salt` to keep the stored salt, or to have one assigned the first time that rollout is saved. Sending a different salt reshuffles that rollout. Target keys are variation indexes written as decimal strings, with no leading zero.
+
 ### Audit
 
 | Method | Path | Behavior |

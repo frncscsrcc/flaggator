@@ -22,6 +22,13 @@ MAX_VARIATIONS = 20
 MAX_VARIATION_BYTES = 16 * 1024
 # MySQL TEXT holds 65,535 bytes. A longer description would fail at insert.
 MAX_DESCRIPTION_BYTES = 65535
+# Caps from the security document. A targeting write over a cap is rejected.
+MAX_RULES = 100
+MAX_CLAUSES = 20
+MAX_CLAUSE_VALUES = 50
+MAX_TARGETS = 1000
+MAX_ATTRIBUTE_NAME_LENGTH = 64
+ROLLOUT_WEIGHT_TOTAL = 100000
 
 
 def is_public_key(value: str) -> bool:

@@ -8,7 +8,7 @@ info:
     that are not implemented yet. Update this file in the same change as a
     route, a request body, or a response body.
 
-    SDK keys, targeting, audit reads, and evaluation are not in this file yet.
+    SDK keys, audit reads, and evaluation are not in this file yet.
 servers:
   - url: http://127.0.0.1:8080
     description: Default bind address
@@ -19,6 +19,7 @@ tags:
   - name: Projects
   - name: Environments
   - name: Flags
+  - name: Targeting
 paths:
   /health:
     get:
@@ -308,6 +309,87 @@ paths:
           $ref: "#/components/responses/MethodNotAllowed"
         "500":
           $ref: "#/components/responses/StorageError"
+  /v1/projects/{projectKey}/flags/{flagKey}/environments/{environmentKey}:
+    get:
+      tags: [Targeting]
+      summary: Fetch targeting for one flag in one environment
+      operationId: getTargeting
+      description: |
+        Returns the stored configuration, including version. The environment
+        key is the path, not a field of the body. Management reads come from
+        SQL, not from the evaluation cache.
+      parameters:
+        - $ref: "#/components/parameters/ProjectKey"
+        - $ref: "#/components/parameters/FlagKey"
+        - $ref: "#/components/parameters/EnvironmentKey"
+      responses:
+        "200":
+          description: The stored targeting document.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Targeting"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "405":
+          $ref: "#/components/responses/MethodNotAllowed"
+        "500":
+          $ref: "#/components/responses/StorageError"
+    put:
+      tags: [Targeting]
+      summary: Replace targeting
+      operationId: replaceTargeting
+      description: |
+        Replaces the whole document. version is the version returned by the
+        last fetch. Success stores version + 1. A different stored version
+        is 409 and does not change the row. Omit a rule id to create a rule;
+        the service assigns the id. Send a stored id to keep that rule. Omit
+        a rollout salt to keep the stored salt, or to have one assigned for
+        a new rollout. Sending a different salt reshuffles that rollout.
+      parameters:
+        - $ref: "#/components/parameters/ProjectKey"
+        - $ref: "#/components/parameters/FlagKey"
+        - $ref: "#/components/parameters/EnvironmentKey"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/Targeting"
+      responses:
+        "200":
+          description: The stored targeting document, with version incremented by one.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Targeting"
+        "400":
+          $ref: "#/components/responses/ValidationError"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "405":
+          $ref: "#/components/responses/MethodNotAllowed"
+        "409":
+          description: The configuration version is stale. The stored document was not changed.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+              example:
+                error:
+                  code: conflict
+                  message: The configuration version is stale.
+                  details: []
+        "500":
+          $ref: "#/components/responses/StorageError"
 components:
   securitySchemes:
     bearerAuth:
@@ -323,6 +405,12 @@ components:
         $ref: "#/components/schemas/PublicKey"
     FlagKey:
       name: flagKey
+      in: path
+      required: true
+      schema:
+        $ref: "#/components/schemas/PublicKey"
+    EnvironmentKey:
+      name: environmentKey
       in: path
       required: true
       schema:
@@ -392,7 +480,7 @@ components:
               message: Project does not exist.
               details: []
     Conflict:
-      description: The key already exists.
+      description: The key already exists, or the configuration version is stale.
       content:
         application/json:
           schema:
@@ -533,6 +621,133 @@ components:
         - type: array
           items: {}
         - type: object
+    Serve:
+      description: "Either {\"variation\": <index>} or a rollout."
+      oneOf:
+        - $ref: "#/components/schemas/VariationServe"
+        - $ref: "#/components/schemas/RolloutServe"
+    VariationServe:
+      type: object
+      required: [variation]
+      additionalProperties: false
+      properties:
+        variation:
+          type: integer
+          minimum: 0
+    RolloutServe:
+      type: object
+      required: [rollout]
+      additionalProperties: false
+      properties:
+        rollout:
+          $ref: "#/components/schemas/Rollout"
+    Rollout:
+      type: object
+      required: [variations]
+      additionalProperties: false
+      properties:
+        salt:
+          type: string
+          minLength: 1
+          description: Present on every stored rollout. Omit it on write to keep the stored salt, or to have one assigned for a new rollout.
+        variations:
+          type: array
+          minItems: 1
+          description: Non-negative integer weights that sum to 100000.
+          items:
+            $ref: "#/components/schemas/RolloutWeight"
+    RolloutWeight:
+      type: object
+      required: [variation_index, weight]
+      additionalProperties: false
+      properties:
+        variation_index:
+          type: integer
+          minimum: 0
+        weight:
+          type: integer
+          minimum: 0
+    Clause:
+      type: object
+      required: [attribute, operator, values]
+      additionalProperties: false
+      properties:
+        attribute:
+          type: string
+          minLength: 1
+          maxLength: 64
+        operator:
+          type: string
+          enum: [eq, neq, in, not_in, starts_with, ends_with, contains, gt, gte, lt, lte]
+        values:
+          type: array
+          maxItems: 50
+          items: {}
+          description: eq, gt, gte, lt, and lte take one value. The other operators take at least one.
+    Rule:
+      type: object
+      required: [clauses, serve]
+      additionalProperties: false
+      properties:
+        id:
+          type: string
+          description: Assigned by the service. Omit it to create a rule. Send a stored id to keep that rule.
+        clauses:
+          type: array
+          maxItems: 20
+          items:
+            $ref: "#/components/schemas/Clause"
+        serve:
+          $ref: "#/components/schemas/Serve"
+    Prerequisite:
+      type: object
+      required: [flag_key, variation_index]
+      additionalProperties: false
+      properties:
+        flag_key:
+          $ref: "#/components/schemas/PublicKey"
+        variation_index:
+          type: integer
+          minimum: 0
+    Targeting:
+      type: object
+      required:
+        - enabled
+        - off_variation
+        - fallthrough
+        - rules
+        - targets
+        - prerequisites
+        - version
+      additionalProperties: false
+      properties:
+        enabled:
+          type: boolean
+        off_variation:
+          type: integer
+          minimum: 0
+        fallthrough:
+          $ref: "#/components/schemas/Serve"
+        rules:
+          type: array
+          maxItems: 100
+          items:
+            $ref: "#/components/schemas/Rule"
+        targets:
+          type: object
+          additionalProperties:
+            type: array
+            items:
+              type: string
+          description: Keys are variation indexes as decimal strings, with no leading zero. The lists do not share a context key. At most 1000 keys in total.
+        prerequisites:
+          type: array
+          items:
+            $ref: "#/components/schemas/Prerequisite"
+        version:
+          type: integer
+          minimum: 1
+          description: The version returned by the last fetch of this configuration.
     FlagConfig:
       type: object
       required:
@@ -553,25 +768,23 @@ components:
           type: integer
           minimum: 0
         fallthrough:
-          type: object
-          description: "A variation serve is {\"variation\": <index>}."
-          required: [variation]
-          additionalProperties: false
-          properties:
-            variation:
-              type: integer
-              minimum: 0
+          $ref: "#/components/schemas/Serve"
         rules:
           type: array
-          items: {}
-          description: Empty until a targeting write stores rules.
+          maxItems: 100
+          items:
+            $ref: "#/components/schemas/Rule"
         targets:
           type: object
-          description: Empty object until a targeting write stores targets.
+          additionalProperties:
+            type: array
+            items:
+              type: string
+          description: Keys are variation indexes as decimal strings, with no leading zero. The lists do not share a context key. At most 1000 keys in total.
         prerequisites:
           type: array
-          items: {}
-          description: Empty until a targeting write stores prerequisites.
+          items:
+            $ref: "#/components/schemas/Prerequisite"
         version:
           type: integer
           minimum: 1

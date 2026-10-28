@@ -8,6 +8,15 @@ import json
 from domain.errors import StorageError
 
 
+def dump_json_text(value: object) -> str:
+    """Return canonical JSON text for a document the application is storing.
+
+    Object keys are sorted so two equal documents store the same text. Does
+    not read the database. The caller passes a document it just built.
+    """
+    return json.dumps(value, ensure_ascii=False, separators=(",", ":"), sort_keys=True)
+
+
 def load_json_text(value: object) -> object:
     """Return the Python value stored in a JSON text column.
 
