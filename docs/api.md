@@ -2,7 +2,7 @@
 
 The HTTP API is the product surface ([A2](decisions.md)). This document specifies how controllers behave, how errors look, and the resources of the first release ([P1](decisions.md), [P10](decisions.md)).
 
-Paths and fields here are the design contract. An OpenAPI document should be generated from the implemented routes once they exist, and checked against this document. Until then, this document wins.
+Paths and fields here are the design contract. The routes the process serves are listed in [openapi.yaml](openapi.yaml). A change to a path, status, query, request body, or response body updates that file in the same change. A route that is not implemented yet stays in this document and out of the OpenAPI file. If the two disagree about a route that exists, this document wins until the OpenAPI file is corrected.
 
 ## Protocol
 
@@ -111,6 +111,12 @@ The response for an environment includes its key and name. It does not include t
 | `GET` | `/v1/projects/{projectKey}/flags` | List flags. Each item includes the variation list and, if a query `environment` is present, that environment's configuration summary. |
 | `GET` | `/v1/projects/{projectKey}/flags/{flagKey}` | Fetch the flag, variations, and every environment configuration. |
 | `PATCH` | `/v1/projects/{projectKey}/flags/{flagKey}` | Update `name` and `description`. Append variations. Cannot change `key`. Cannot remove or reorder variations in v1. |
+
+A flag response is `{ "key", "name", "description", "variations", "environments" }`. `variations` is the ordered JSON values; the index is the position, starting at 0. Each environment entry is `{ "key", "enabled", "off_variation", "fallthrough", "rules", "targets", "prerequisites", "version" }`. Create returns 201 with this document. Fetch and patch return 200 with it.
+
+A list item has `key`, `name`, `description`, and `variations`. When the query `environment` names an environment, the item also has `environment`: `{ "key", "enabled", "off_variation", "version" }`. An unknown environment is 404. List pagination uses the same `limit` and `cursor` as the other lists.
+
+`PATCH` accepts `name`, `description`, and `variations`. At least one is required. `key` is rejected. When `variations` is present it is the full ordered list and must start with the variations already stored; values after that prefix are appended. A shorter list or a different prefix is 400. Appended variations do not change existing environment configurations.
 
 ### Targeting
 

@@ -29,7 +29,7 @@ def page_request(request: Request) -> KeysetQuery:
     )
 
 
-def page_body(items: list[dict[str, str]], next_key: str | None) -> dict[str, object]:
+def page_body(items: list[dict], next_key: str | None) -> dict[str, object]:
     """Return the list document.
 
     next_cursor is null when next_key is None, which includes an empty

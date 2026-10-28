@@ -1,0 +1,674 @@
+openapi: 3.0.3
+info:
+  title: flaggator
+  version: 0.0.0
+  description: |
+    HTTP API for the flaggator feature-flag service. This file lists the
+    routes the process serves. docs/api.md is the design contract for routes
+    that are not implemented yet. Update this file in the same change as a
+    route, a request body, or a response body.
+
+    SDK keys, targeting, audit reads, and evaluation are not in this file yet.
+servers:
+  - url: http://127.0.0.1:8080
+    description: Default bind address
+security:
+  - bearerAuth: []
+tags:
+  - name: Health
+  - name: Projects
+  - name: Environments
+  - name: Flags
+paths:
+  /health:
+    get:
+      tags: [Health]
+      summary: Process is up
+      operationId: getHealth
+      security: []
+      responses:
+        "200":
+          description: The process is answering. The database was not checked.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Health"
+  /v1/projects:
+    get:
+      tags: [Projects]
+      summary: List projects
+      operationId: listProjects
+      parameters:
+        - $ref: "#/components/parameters/Limit"
+        - $ref: "#/components/parameters/Cursor"
+      responses:
+        "200":
+          description: One page of projects, ordered by key.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ProjectPage"
+        "400":
+          $ref: "#/components/responses/ValidationError"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "405":
+          $ref: "#/components/responses/MethodNotAllowed"
+        "500":
+          $ref: "#/components/responses/StorageError"
+    post:
+      tags: [Projects]
+      summary: Create a project
+      operationId: createProject
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/NamedCreate"
+      responses:
+        "201":
+          description: The stored project.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Project"
+        "400":
+          $ref: "#/components/responses/ValidationError"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "405":
+          $ref: "#/components/responses/MethodNotAllowed"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        "500":
+          $ref: "#/components/responses/StorageError"
+  /v1/projects/{projectKey}:
+    get:
+      tags: [Projects]
+      summary: Fetch one project
+      operationId: getProject
+      parameters:
+        - $ref: "#/components/parameters/ProjectKey"
+      responses:
+        "200":
+          description: The project.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Project"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "405":
+          $ref: "#/components/responses/MethodNotAllowed"
+        "500":
+          $ref: "#/components/responses/StorageError"
+  /v1/projects/{projectKey}/environments:
+    get:
+      tags: [Environments]
+      summary: List environments
+      operationId: listEnvironments
+      parameters:
+        - $ref: "#/components/parameters/ProjectKey"
+        - $ref: "#/components/parameters/Limit"
+        - $ref: "#/components/parameters/Cursor"
+      responses:
+        "200":
+          description: One page of environments in the project, ordered by key. Secrets are absent.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/EnvironmentPage"
+        "400":
+          $ref: "#/components/responses/ValidationError"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "405":
+          $ref: "#/components/responses/MethodNotAllowed"
+        "500":
+          $ref: "#/components/responses/StorageError"
+    post:
+      tags: [Environments]
+      summary: Create an environment
+      operationId: createEnvironment
+      description: |
+        Does not copy targeting from another environment. Each flag already
+        in the project gets a disabled configuration with off variation 0
+        and fallthrough variation 0.
+      parameters:
+        - $ref: "#/components/parameters/ProjectKey"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/NamedCreate"
+      responses:
+        "201":
+          description: The stored environment. The SDK secret is not included.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Environment"
+        "400":
+          $ref: "#/components/responses/ValidationError"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "405":
+          $ref: "#/components/responses/MethodNotAllowed"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        "500":
+          $ref: "#/components/responses/StorageError"
+  /v1/projects/{projectKey}/flags:
+    get:
+      tags: [Flags]
+      summary: List flags
+      operationId: listFlags
+      parameters:
+        - $ref: "#/components/parameters/ProjectKey"
+        - $ref: "#/components/parameters/Limit"
+        - $ref: "#/components/parameters/Cursor"
+        - name: environment
+          in: query
+          required: false
+          description: When set, each item includes that environment's configuration summary. An unknown environment is 404.
+          schema:
+            $ref: "#/components/schemas/PublicKey"
+      responses:
+        "200":
+          description: One page of flags, ordered by key.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/FlagPage"
+        "400":
+          $ref: "#/components/responses/ValidationError"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "405":
+          $ref: "#/components/responses/MethodNotAllowed"
+        "500":
+          $ref: "#/components/responses/StorageError"
+    post:
+      tags: [Flags]
+      summary: Create a flag
+      operationId: createFlag
+      description: |
+        Stores the variations in array order, starting at index 0, and a
+        disabled configuration in every existing environment.
+      parameters:
+        - $ref: "#/components/parameters/ProjectKey"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/FlagCreate"
+      responses:
+        "201":
+          description: The stored flag, including every environment configuration.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Flag"
+        "400":
+          $ref: "#/components/responses/ValidationError"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "405":
+          $ref: "#/components/responses/MethodNotAllowed"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        "500":
+          $ref: "#/components/responses/StorageError"
+  /v1/projects/{projectKey}/flags/{flagKey}:
+    get:
+      tags: [Flags]
+      summary: Fetch one flag
+      operationId: getFlag
+      parameters:
+        - $ref: "#/components/parameters/ProjectKey"
+        - $ref: "#/components/parameters/FlagKey"
+      responses:
+        "200":
+          description: The flag, its variations, and every environment configuration.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Flag"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "405":
+          $ref: "#/components/responses/MethodNotAllowed"
+        "500":
+          $ref: "#/components/responses/StorageError"
+    patch:
+      tags: [Flags]
+      summary: Patch a flag
+      operationId: patchFlag
+      description: |
+        Updates name and description. When variations is sent, it is the full
+        ordered list and must start with the stored variations. Values after
+        that prefix are appended. A shorter list, a different prefix, or a
+        key field is 400. Existing environment configurations keep their indexes.
+      parameters:
+        - $ref: "#/components/parameters/ProjectKey"
+        - $ref: "#/components/parameters/FlagKey"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/FlagPatch"
+      responses:
+        "200":
+          description: The stored flag after the patch.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Flag"
+        "400":
+          $ref: "#/components/responses/ValidationError"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "405":
+          $ref: "#/components/responses/MethodNotAllowed"
+        "500":
+          $ref: "#/components/responses/StorageError"
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      description: Opaque management token. A JWT is not accepted. An SDK key receives 403 on these routes.
+  parameters:
+    ProjectKey:
+      name: projectKey
+      in: path
+      required: true
+      schema:
+        $ref: "#/components/schemas/PublicKey"
+    FlagKey:
+      name: flagKey
+      in: path
+      required: true
+      schema:
+        $ref: "#/components/schemas/PublicKey"
+    Limit:
+      name: limit
+      in: query
+      required: false
+      description: Page size. Defaults to 50. Values outside 1 to 200 are 400.
+      schema:
+        type: integer
+        minimum: 1
+        maximum: 200
+        default: 50
+    Cursor:
+      name: cursor
+      in: query
+      required: false
+      description: Opaque cursor from a previous page. Clients do not construct it. A missing cursor starts at the first key.
+      schema:
+        type: string
+  responses:
+    ValidationError:
+      description: The request shape or a domain rule was rejected.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+          example:
+            error:
+              code: validation_error
+              message: The key is not valid.
+              details:
+                - field: key
+                  message: Use lowercase letters, digits, and single hyphens.
+    Unauthenticated:
+      description: The credential is missing, unknown, or revoked. The message is the same for all three.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+          example:
+            error:
+              code: unauthenticated
+              message: A valid credential is required.
+              details: []
+    Forbidden:
+      description: The credential is valid and may not call this route.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+          example:
+            error:
+              code: forbidden
+              message: The credential may not call this route.
+              details: []
+    NotFound:
+      description: The project, environment, or flag does not exist.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+          example:
+            error:
+              code: not_found
+              message: Project does not exist.
+              details: []
+    Conflict:
+      description: The key already exists.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+          example:
+            error:
+              code: conflict
+              message: Flag key already exists.
+              details: []
+    MethodNotAllowed:
+      description: The path exists and does not implement this method.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+          example:
+            error:
+              code: validation_error
+              message: This route accepts GET.
+              details: []
+    StorageError:
+      description: The database failed. The message does not include driver text.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+          example:
+            error:
+              code: storage_error
+              message: The database failed to complete the request.
+              details: []
+  schemas:
+    Error:
+      type: object
+      required: [error]
+      properties:
+        error:
+          type: object
+          required: [code, message, details]
+          properties:
+            code:
+              type: string
+              enum:
+                - validation_error
+                - unauthenticated
+                - forbidden
+                - not_found
+                - conflict
+                - storage_error
+            message:
+              type: string
+            details:
+              type: array
+              items:
+                $ref: "#/components/schemas/ErrorDetail"
+    ErrorDetail:
+      type: object
+      required: [field, message]
+      properties:
+        field:
+          type: string
+        message:
+          type: string
+    Health:
+      type: object
+      required: [status]
+      properties:
+        status:
+          type: string
+          enum: [ok]
+    PublicKey:
+      type: string
+      minLength: 1
+      maxLength: 128
+      pattern: "^[a-z0-9]+(?:-[a-z0-9]+)*$"
+      description: Lowercase letters, digits, and single hyphens. No leading or trailing hyphen.
+    DisplayName:
+      type: string
+      minLength: 1
+      maxLength: 256
+      description: Must not be empty or have leading or trailing spaces.
+    Project:
+      type: object
+      required: [key, name]
+      additionalProperties: false
+      properties:
+        key:
+          $ref: "#/components/schemas/PublicKey"
+        name:
+          $ref: "#/components/schemas/DisplayName"
+    ProjectPage:
+      type: object
+      required: [items, next_cursor]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/Project"
+        next_cursor:
+          type: string
+          nullable: true
+          description: Null when this page is the last one.
+    Environment:
+      type: object
+      required: [key, name]
+      additionalProperties: false
+      properties:
+        key:
+          $ref: "#/components/schemas/PublicKey"
+        name:
+          $ref: "#/components/schemas/DisplayName"
+    EnvironmentPage:
+      type: object
+      required: [items, next_cursor]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/Environment"
+        next_cursor:
+          type: string
+          nullable: true
+    NamedCreate:
+      type: object
+      required: [key, name]
+      additionalProperties: false
+      properties:
+        key:
+          $ref: "#/components/schemas/PublicKey"
+        name:
+          $ref: "#/components/schemas/DisplayName"
+    VariationValue:
+      description: A JSON boolean, number, string, array, or object. Null is not allowed anywhere in the value. The encoded value is at most 16 KiB.
+      oneOf:
+        - type: boolean
+        - type: number
+        - type: string
+        - type: array
+          items: {}
+        - type: object
+    FlagConfig:
+      type: object
+      required:
+        - key
+        - enabled
+        - off_variation
+        - fallthrough
+        - rules
+        - targets
+        - prerequisites
+        - version
+      properties:
+        key:
+          $ref: "#/components/schemas/PublicKey"
+        enabled:
+          type: boolean
+        off_variation:
+          type: integer
+          minimum: 0
+        fallthrough:
+          type: object
+          description: "A variation serve is {\"variation\": <index>}."
+          required: [variation]
+          additionalProperties: false
+          properties:
+            variation:
+              type: integer
+              minimum: 0
+        rules:
+          type: array
+          items: {}
+          description: Empty until a targeting write stores rules.
+        targets:
+          type: object
+          description: Empty object until a targeting write stores targets.
+        prerequisites:
+          type: array
+          items: {}
+          description: Empty until a targeting write stores prerequisites.
+        version:
+          type: integer
+          minimum: 1
+    FlagConfigSummary:
+      type: object
+      required: [key, enabled, off_variation, version]
+      additionalProperties: false
+      properties:
+        key:
+          $ref: "#/components/schemas/PublicKey"
+        enabled:
+          type: boolean
+        off_variation:
+          type: integer
+          minimum: 0
+        version:
+          type: integer
+          minimum: 1
+    Flag:
+      type: object
+      required: [key, name, description, variations, environments]
+      properties:
+        key:
+          $ref: "#/components/schemas/PublicKey"
+        name:
+          $ref: "#/components/schemas/DisplayName"
+        description:
+          type: string
+          description: May be empty. At most 65535 bytes.
+        variations:
+          type: array
+          minItems: 2
+          maxItems: 20
+          items:
+            $ref: "#/components/schemas/VariationValue"
+        environments:
+          type: array
+          items:
+            $ref: "#/components/schemas/FlagConfig"
+    FlagSummary:
+      type: object
+      required: [key, name, description, variations]
+      properties:
+        key:
+          $ref: "#/components/schemas/PublicKey"
+        name:
+          $ref: "#/components/schemas/DisplayName"
+        description:
+          type: string
+        variations:
+          type: array
+          items:
+            $ref: "#/components/schemas/VariationValue"
+        environment:
+          $ref: "#/components/schemas/FlagConfigSummary"
+          description: Present only when the list query named an environment.
+    FlagPage:
+      type: object
+      required: [items, next_cursor]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/FlagSummary"
+        next_cursor:
+          type: string
+          nullable: true
+    FlagCreate:
+      type: object
+      required: [key, name, description, variations]
+      additionalProperties: false
+      properties:
+        key:
+          $ref: "#/components/schemas/PublicKey"
+        name:
+          $ref: "#/components/schemas/DisplayName"
+        description:
+          type: string
+        variations:
+          type: array
+          minItems: 2
+          maxItems: 20
+          items:
+            $ref: "#/components/schemas/VariationValue"
+    FlagPatch:
+      type: object
+      minProperties: 1
+      additionalProperties: false
+      properties:
+        name:
+          $ref: "#/components/schemas/DisplayName"
+        description:
+          type: string
+        variations:
+          type: array
+          minItems: 2
+          maxItems: 20
+          description: The full ordered list. It must start with the stored variations.
+          items:
+            $ref: "#/components/schemas/VariationValue"

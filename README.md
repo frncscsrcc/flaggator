@@ -36,6 +36,7 @@ Dependency direction is one way: `api` → `domain services` → `repositories`.
 | [Architecture](docs/architecture.md) | Layers, request lifecycle, module layout |
 | [Domain](docs/domain.md) | Flag model and the evaluation algorithm |
 | [API](docs/api.md) | Resources, controllers, errors, credentials |
+| [OpenAPI](docs/openapi.yaml) | Implemented routes, in a form tools can read |
 | [Persistence](docs/persistence.md) | SQL style, DTO mapping, transactions, schema |
 | [Cache](docs/cache.md) | Cache protocol, what is stored, invalidation |
 | [Security](docs/security.md) | Tokens, authorization, injection, audit, limits |
@@ -43,4 +44,4 @@ Dependency direction is one way: `api` → `domain services` → `repositories`.
 
 ## Status
 
-v1 implementation has started. The connection layer, schema migrations, in-memory cache, GET /health, management tokens, and project and environment routes are in place. `python -m main bootstrap` creates a management token. The process does not listen for requests yet. The license is not chosen yet.
+v1 implementation has started. The connection layer, schema migrations, in-memory cache, GET /health, management tokens, projects, environments, and flags are in place. `python -m main bootstrap` creates a management token. The process does not listen for requests yet. The license is not chosen yet.

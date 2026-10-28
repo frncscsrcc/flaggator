@@ -6,6 +6,7 @@ the connection the adapter opened.
 """
 
 from api.environments import create_environment, list_environments
+from api.flags import create_flag, get_flag, list_flags, patch_flag
 from api.health import get_health
 from api.projects import create_project, get_project, list_projects
 from api.request import Request, Response
@@ -88,6 +89,10 @@ def _management_route(
         return get_project(session[0], session[1], project_key)
     if len(parts) == 5 and parts[4] == "environments":
         return _environments_collection(request, session[0], session[1], project_key)
+    if len(parts) == 5 and parts[4] == "flags":
+        return _flags_collection(request, session[0], session[1], project_key)
+    if len(parts) == 6 and parts[4] == "flags":
+        return _one_flag(request, session[0], session[1], project_key, parts[5])
     return route_not_found()
 
 
@@ -122,6 +127,41 @@ def _environments_collection(
     if request.method == "POST":
         return create_environment(principal, connection, request, project_key)
     return method_not_allowed("GET or POST")
+
+
+def _flags_collection(
+    request: Request,
+    principal: Principal,
+    connection: Connection,
+    project_key: str,
+) -> Response:
+    """Handle the flag collection under project_key.
+
+    GET lists and POST creates. Any other method is 405. Does not commit.
+    """
+    if request.method == "GET":
+        return list_flags(principal, connection, request, project_key)
+    if request.method == "POST":
+        return create_flag(principal, connection, request, project_key)
+    return method_not_allowed("GET or POST")
+
+
+def _one_flag(
+    request: Request,
+    principal: Principal,
+    connection: Connection,
+    project_key: str,
+    flag_key: str,
+) -> Response:
+    """Handle one flag.
+
+    GET fetches and PATCH updates. Any other method is 405. Does not commit.
+    """
+    if request.method == "GET":
+        return get_flag(principal, connection, project_key, flag_key)
+    if request.method == "PATCH":
+        return patch_flag(principal, connection, request, project_key, flag_key)
+    return method_not_allowed("GET or PATCH")
 
 
 def _session(
