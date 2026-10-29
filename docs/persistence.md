@@ -167,7 +167,7 @@ Logical types are what the application means. Each engine's migration renders th
 | `flags` | Flag identity inside a project | `project_id`, `key` unique per project, `name`, `description` |
 | `flag_variations` | Ordered values | `flag_id`, `variation_index` unique per flag, `value_json` |
 | `flag_configs` | One row per flag per environment | `flag_id`, `environment_id`, `enabled`, `off_variation`, `fallthrough_json`, `rules_json`, `targets_json`, `prerequisites_json`, `version` |
-| `api_credentials` | Management tokens and SDK keys | `kind`, `secret_hash`, `prefix`, `environment_id` null for management tokens, `revoked_at` |
+| `api_credentials` | Management tokens and SDK keys | `kind`, `name` (operator label for SDK keys, null for management), `secret_hash`, `prefix`, `environment_id` null for management tokens, `revoked_at` |
 | `audit_events` | Mutation log | `at`, `actor_kind`, `actor_id`, `action`, `project_key`, `environment_key`, `flag_key`, `before_json`, `after_json` |
 | `schema_migrations` | Applied migration ids | `id` primary key |
 

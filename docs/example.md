@@ -192,15 +192,29 @@ The shop backend should not hold the management token. Create an SDK key bound t
 curl -s -X POST http://127.0.0.1:8080/v1/projects/shop/environments/prod/sdk-keys \
   -H "Authorization: Bearer $TOKEN" \
   -H "Content-Type: application/json" \
-  -d '{}'
+  -d '{"name":"checkout-api"}'
 ```
 
-Save `id`, `prefix`, and `secret`. The prefix is the first eight characters of the secret and is safe to store in a log. The secret is not.
+The response looks like this (values differ every time):
+
+```json
+{
+  "id": 2,
+  "name": "checkout-api",
+  "prefix": "hzyQaoQw",
+  "created_at": "2026-10-29T17:51:11Z",
+  "secret": "hzyQaoQw...."
+}
+```
+
+`name` is the label you chose so the list stays readable. `id` is a decimal number and the only value the revoke path accepts. `prefix` is the first eight characters of `secret`; it is a label for logs, not the path id. Putting the prefix in the path returns `404` and leaves the key active.
 
 ```bash
-export SDK_TOKEN=the-printed-sdk-secret
-export SDK_KEY_ID=the-id
+export SDK_TOKEN='paste-the-secret-field-here'
+export SDK_KEY_ID=2
 ```
+
+Replace `2` with the `id` from your create response. List active keys with `GET /v1/projects/shop/environments/prod/sdk-keys` if you lost the number; that list shows `id`, `name`, and `prefix`, never `secret`.
 
 The application sends the SDK token and omits `project_key` and `environment_key`. The key already names `shop` / `prod`:
 
@@ -226,14 +240,15 @@ The body is `{ "decisions": [ ... ] }`. With only `checkout-v2` in the project, 
 
 ## 8. Retire the application key
 
-When the secret is no longer wanted, revoke it with the management token. The path id is the `id` from create, not the secret and not the prefix.
+When the secret is no longer wanted, revoke it with the management token. The path must end with the numeric `id` from create (for example `.../sdk-keys/2`). A path that ends with the prefix returns `404` and does not revoke.
 
 ```bash
-curl -s -X DELETE http://127.0.0.1:8080/v1/projects/shop/environments/prod/sdk-keys/$SDK_KEY_ID \
+curl -s -w "\n%{http_code}\n" -X DELETE \
+  http://127.0.0.1:8080/v1/projects/shop/environments/prod/sdk-keys/$SDK_KEY_ID \
   -H "Authorization: Bearer $TOKEN"
 ```
 
-The response is `204` and `{}`. The next evaluation with that secret is `401`, the same response as an unknown token:
+That must print `{}` and then `204`. If it prints `404`, `$SDK_KEY_ID` was not the numeric id and the secret still works. The next evaluation with that secret is `401`, the same response as an unknown token:
 
 ```bash
 curl -s -o /dev/null -w "%{http_code}\n" -X POST http://127.0.0.1:8080/v1/evaluate \

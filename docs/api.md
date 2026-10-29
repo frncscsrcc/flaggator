@@ -100,10 +100,10 @@ The response for an environment includes its key and name. It does not include t
 | Method | Path | Behavior |
 | --- | --- | --- |
 | `POST` | `/v1/projects/{projectKey}/environments/{environmentKey}/sdk-keys` | Create a key. The plaintext secret is returned once, in this response. |
-| `GET` | `/v1/projects/{projectKey}/environments/{environmentKey}/sdk-keys` | List key ids, prefixes, and created timestamps. No secrets. |
+| `GET` | `/v1/projects/{projectKey}/environments/{environmentKey}/sdk-keys` | List key ids, names, prefixes, and created timestamps. No secrets. |
 | `DELETE` | `/v1/projects/{projectKey}/environments/{environmentKey}/sdk-keys/{keyId}` | Revoke. Evaluation with that key becomes 401. |
 
-Create takes an empty object. The 201 response is `{ "id", "prefix", "created_at", "secret" }`. `id` is the decimal credential id. `prefix` is the first eight characters of the secret. List items are `{ "id", "prefix", "created_at" }` and do not include `secret`. The audit row stores the id and the prefix, not the secret. `keyId` that is missing, already revoked, or not a decimal id without a leading zero is 404.
+Create takes `{ "name" }`. `name` is a non-secret label for the operator (same rules as a display name). An active key in the same environment with the same name is 409. The 201 response is `{ "id", "name", "prefix", "created_at", "secret" }`. `id` is the decimal credential id used in the revoke path. `prefix` is the first eight characters of the secret. List items are `{ "id", "name", "prefix", "created_at" }` and do not include `secret`. The audit row stores the id, the name, and the prefix, not the secret. `keyId` that is missing, already revoked, or not a decimal id without a leading zero is 404.
 
 ### Flags
 

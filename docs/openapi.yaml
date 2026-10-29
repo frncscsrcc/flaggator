@@ -422,7 +422,10 @@ paths:
       tags: [SDK keys]
       summary: Create an SDK key
       operationId: createSdkKey
-      description: The body is an empty object. The secret is returned once and is not written to the audit log.
+      description: |
+        name is a non-secret label for the operator. The secret is returned
+        once and is not written to the audit log. An active key in this
+        environment with the same name is 409.
       parameters:
         - $ref: "#/components/parameters/ProjectKey"
         - $ref: "#/components/parameters/EnvironmentKey"
@@ -431,7 +434,7 @@ paths:
         content:
           application/json:
             schema:
-              $ref: "#/components/schemas/EmptyObject"
+              $ref: "#/components/schemas/SdkKeyCreate"
       responses:
         "201":
           description: The new key. secret will not be returned again.
@@ -449,6 +452,17 @@ paths:
           $ref: "#/components/responses/NotFound"
         "405":
           $ref: "#/components/responses/MethodNotAllowed"
+        "409":
+          description: An active SDK key in this environment already has this name.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+              example:
+                error:
+                  code: conflict
+                  message: SDK key name already exists.
+                  details: []
         "500":
           $ref: "#/components/responses/StorageError"
   /v1/projects/{projectKey}/environments/{environmentKey}/sdk-keys/{keyId}:
@@ -1077,6 +1091,13 @@ components:
     EmptyObject:
       type: object
       additionalProperties: false
+    SdkKeyCreate:
+      type: object
+      required: [name]
+      additionalProperties: false
+      properties:
+        name:
+          $ref: "#/components/schemas/DisplayName"
     SdkKeyPage:
       type: object
       required: [items]
@@ -1088,15 +1109,19 @@ components:
             $ref: "#/components/schemas/SdkKey"
     SdkKey:
       type: object
-      required: [id, prefix, created_at]
+      required: [id, name, prefix, created_at]
       additionalProperties: false
       properties:
         id:
           type: integer
+          description: Decimal credential id used in the revoke path.
+        name:
+          $ref: "#/components/schemas/DisplayName"
         prefix:
           type: string
           minLength: 8
           maxLength: 8
+          description: First eight characters of the secret. Not enough to reconstruct it.
         created_at:
           type: string
     IssuedSdkKey:

@@ -105,12 +105,18 @@ class EvaluationTests(unittest.TestCase):
         created_status, created = self.call(
             "POST",
             "/v1/projects/shop/environments/prod/sdk-keys",
-            {},
+            {"name": "checkout-api"},
         )
         self.assertEqual(created_status, "201 Created")
         secret = created["secret"]
+        self.assertEqual(created["name"], "checkout-api")
         self.assertEqual(created["prefix"], secret[:8])
         listed_status, listed = self.call("GET", "/v1/projects/shop/environments/prod/sdk-keys")
+        duplicate_status, duplicate = self.call(
+            "POST",
+            "/v1/projects/shop/environments/prod/sdk-keys",
+            {"name": "checkout-api"},
+        )
         own_status, own = self.call(
             "POST",
             "/v1/evaluate",
@@ -164,8 +170,11 @@ class EvaluationTests(unittest.TestCase):
         )
         created_audit = [row for row in self.audit_rows() if row["action"] == "sdk_key.create"]
         self.assertEqual(listed_status, "200 OK")
+        self.assertEqual(listed["items"][0]["name"], "checkout-api")
         self.assertEqual(listed["items"][0]["prefix"], created["prefix"])
         self.assertNotIn("secret", listed["items"][0])
+        self.assertEqual(duplicate_status, "409 Conflict")
+        self.assertEqual(duplicate["error"]["message"], "SDK key name already exists.")
         self.assertEqual(own_status, "200 OK")
         self.assertEqual(own["reason"], "target_match")
         self.assertEqual(mismatch_status, "403 Forbidden")

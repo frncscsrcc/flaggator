@@ -65,6 +65,7 @@ CREATE TABLE flag_configs (
 CREATE TABLE api_credentials (
     id BIGINT NOT NULL AUTO_INCREMENT PRIMARY KEY,
     kind VARCHAR(32) NOT NULL,
+    name VARCHAR(256) NULL,
     secret_hash VARCHAR(64) NOT NULL,
     prefix VARCHAR(16) NOT NULL,
     environment_id BIGINT NULL,

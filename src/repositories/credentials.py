@@ -41,19 +41,21 @@ def insert_credential(
     token: str,
     environment_id: int | None,
     created_at: str,
+    name: str | None = None,
 ) -> int:
     """Insert a credential and return its integer id.
 
     Stores the hash and the prefix, never token. environment_id is None for
-    a management token. Does not commit and does not write an audit row.
+    a management token. name is the operator label for an SDK key, or None
+    for a management token. Does not commit and does not write an audit row.
     """
     cursor = connection.execute(
         """
         INSERT INTO api_credentials (
-            kind, secret_hash, prefix, environment_id, created_at, revoked_at
-        ) VALUES (?, ?, ?, ?, ?, ?)
+            kind, name, secret_hash, prefix, environment_id, created_at, revoked_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?)
         """,
-        (kind, hash_token(token), prefix_of(token), environment_id, created_at, None),
+        (kind, name, hash_token(token), prefix_of(token), environment_id, created_at, None),
     )
     return cursor.last_insert_id
 
@@ -96,10 +98,12 @@ def find_active_principal(connection: Connection, token: str) -> Principal | Non
 class SdkKeyRow:
     """One active SDK key as a list shows it.
 
-    The secret and the hash are absent. prefix is the non-secret label.
+    The secret and the hash are absent. name is the operator label. prefix
+    is the non-secret start of the secret.
     """
 
     id: int
+    name: str
     prefix: str
     created_at: str
 
@@ -112,7 +116,7 @@ def list_sdk_keys(connection: Connection, environment_id: int) -> list[SdkKeyRow
     """
     rows = connection.execute(
         """
-        SELECT id, prefix, created_at
+        SELECT id, name, prefix, created_at
           FROM api_credentials
          WHERE kind = ? AND environment_id = ? AND revoked_at IS NULL
          ORDER BY id
@@ -120,9 +124,44 @@ def list_sdk_keys(connection: Connection, environment_id: int) -> list[SdkKeyRow
         (KIND_SDK, environment_id),
     ).fetchall()
     return [
-        SdkKeyRow(id=int(row["id"]), prefix=str(row["prefix"]), created_at=str(row["created_at"]))
+        SdkKeyRow(
+            id=int(row["id"]),
+            name=str(row["name"]),
+            prefix=str(row["prefix"]),
+            created_at=str(row["created_at"]),
+        )
         for row in rows
     ]
+
+
+def find_active_sdk_key_by_name(
+    connection: Connection,
+    environment_id: int,
+    name: str,
+) -> SdkKeyRow | None:
+    """Return the active SDK key with this name in the environment.
+
+    Returns None when no active key has that name. Does not commit.
+    """
+    row = connection.execute(
+        """
+        SELECT id, name, prefix, created_at
+          FROM api_credentials
+         WHERE kind = ?
+           AND environment_id = ?
+           AND name = ?
+           AND revoked_at IS NULL
+        """,
+        (KIND_SDK, environment_id, name),
+    ).fetchone()
+    if row is None:
+        return None
+    return SdkKeyRow(
+        id=int(row["id"]),
+        name=str(row["name"]),
+        prefix=str(row["prefix"]),
+        created_at=str(row["created_at"]),
+    )
 
 
 def revoke_sdk_key(

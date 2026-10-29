@@ -1,19 +1,26 @@
 """Issue, list, and revoke SDK keys for one environment.
 
-The plaintext secret is returned once. The audit row stores the prefix
-and the id, never the secret.
+The plaintext secret is returned once. The audit row stores the id, the
+name, and the prefix, never the secret.
 """
 
 import json
 import secrets
 
 from domain.clock import utc_timestamp
-from domain.errors import NotFound
+from domain.errors import Conflict, NotFound
 from domain.models.principal import KIND_SDK, Principal
 from domain.services.access import require_management
 from domain.services.audit import record_change
-from domain.validation import is_public_key
-from repositories.credentials import SdkKeyRow, insert_credential, list_sdk_keys, prefix_of, revoke_sdk_key
+from domain.validation import is_public_key, require_display_name
+from repositories.credentials import (
+    SdkKeyRow,
+    find_active_sdk_key_by_name,
+    insert_credential,
+    list_sdk_keys,
+    prefix_of,
+    revoke_sdk_key,
+)
 from repositories.db import Connection
 from repositories.environments import EnvironmentRow, find_environment
 from repositories.projects import ProjectRow, find_project
@@ -24,13 +31,22 @@ _TOKEN_BYTES = 32
 class IssuedSdkKey:
     """The one response that contains an SDK secret.
 
-    secret is the plaintext token. prefix is its non-secret label. Later
-    reads return the prefix and not secret.
+    secret is the plaintext token. name is the operator label. prefix is
+    the non-secret start of the secret. Later reads return name and prefix
+    and not secret.
     """
 
-    def __init__(self, credential_id: int, prefix: str, secret: str, created_at: str) -> None:
+    def __init__(
+        self,
+        credential_id: int,
+        name: str,
+        prefix: str,
+        secret: str,
+        created_at: str,
+    ) -> None:
         """Store the values the create response shows. Does not write them."""
         self.id = credential_id
+        self.name = name
         self.prefix = prefix
         self.secret = secret
         self.created_at = created_at
@@ -41,16 +57,22 @@ def issue_sdk_key(
     principal: Principal,
     project_key: str,
     environment_key: str,
+    name: str,
 ) -> IssuedSdkKey:
     """Create an SDK key for one environment and return the secret once.
 
-    Raises Forbidden for an SDK key, and NotFound when the project or the
-    environment is absent. The audit document has the id and the prefix,
-    not the secret. Does not print the secret.
+    name is the operator label shown in the list. Raises Forbidden for an
+    SDK key, NotFound when the project or the environment is absent,
+    ValidationError for a bad name, and Conflict when an active key already
+    has that name in the environment. The audit document has the id, the
+    name, and the prefix, not the secret. Does not print the secret.
     """
     require_management(principal)
+    label = require_display_name(name, "name")
     with connection.transaction():
         project, environment = _require_scope(connection, project_key, environment_key)
+        if find_active_sdk_key_by_name(connection, environment.id, label) is not None:
+            raise Conflict("SDK key name already exists.")
         created_at = utc_timestamp()
         secret = secrets.token_urlsafe(_TOKEN_BYTES)
         credential_id = insert_credential(
@@ -59,8 +81,15 @@ def issue_sdk_key(
             token=secret,
             environment_id=environment.id,
             created_at=created_at,
+            name=label,
         )
-        issued = IssuedSdkKey(credential_id, prefix_of(secret), secret, created_at)
+        issued = IssuedSdkKey(
+            credential_id,
+            label,
+            prefix_of(secret),
+            secret,
+            created_at,
+        )
         record_change(
             connection,
             principal,
@@ -69,7 +98,7 @@ def issue_sdk_key(
             environment.key,
             None,
             None,
-            _audit_document(issued.id, issued.prefix),
+            _audit_document(issued.id, issued.name, issued.prefix),
         )
     return issued
 
@@ -108,10 +137,12 @@ def revoke_sdk_key_now(
     with connection.transaction():
         project, environment = _require_scope(connection, project_key, environment_key)
         rows = list_sdk_keys(connection, environment.id)
+        name = ""
         prefix = ""
         found = False
         for row in rows:
             if row.id == credential_id:
+                name = row.name
                 prefix = row.prefix
                 found = True
         if not found:
@@ -126,8 +157,8 @@ def revoke_sdk_key_now(
             project.key,
             environment.key,
             None,
-            _audit_document(credential_id, prefix),
-            _audit_document(credential_id, prefix),
+            _audit_document(credential_id, name, prefix),
+            _audit_document(credential_id, name, prefix),
         )
 
 
@@ -154,16 +185,15 @@ def _require_scope(
     return project, environment
 
 
-def _audit_document(credential_id: int, prefix: str) -> str:
+def _audit_document(credential_id: int, name: str, prefix: str) -> str:
     """Return the audit JSON for an SDK key.
 
-    The document has the id and the prefix. It does not have the secret
-    or the hash.
+    The document has the id, the name, and the prefix. It does not have
+    the secret or the hash.
     """
     return json.dumps(
-        {"id": credential_id, "prefix": prefix},
+        {"id": credential_id, "name": name, "prefix": prefix},
         ensure_ascii=False,
         separators=(",", ":"),
         sort_keys=True,
     )
-

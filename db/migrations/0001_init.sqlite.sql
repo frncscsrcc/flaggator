@@ -64,6 +64,7 @@ CREATE TABLE flag_configs (
 CREATE TABLE api_credentials (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     kind TEXT NOT NULL,
+    name TEXT,
     secret_hash TEXT NOT NULL,
     prefix TEXT NOT NULL,
     environment_id INTEGER,
