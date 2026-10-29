@@ -8,7 +8,7 @@ info:
     that are not implemented yet. Update this file in the same change as a
     route, a request body, or a response body.
 
-    SDK keys, audit reads, and evaluation are not in this file yet.
+    Audit reads are not in this file yet.
 servers:
   - url: http://127.0.0.1:8080
     description: Default bind address
@@ -20,6 +20,8 @@ tags:
   - name: Environments
   - name: Flags
   - name: Targeting
+  - name: SDK keys
+  - name: Evaluation
 paths:
   /health:
     get:
@@ -390,12 +392,191 @@ paths:
                   details: []
         "500":
           $ref: "#/components/responses/StorageError"
+  /v1/projects/{projectKey}/environments/{environmentKey}/sdk-keys:
+    get:
+      tags: [SDK keys]
+      summary: List SDK keys
+      operationId: listSdkKeys
+      description: Active keys only. Secrets are absent.
+      parameters:
+        - $ref: "#/components/parameters/ProjectKey"
+        - $ref: "#/components/parameters/EnvironmentKey"
+      responses:
+        "200":
+          description: The active SDK keys. An environment with none returns an empty items list.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SdkKeyPage"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "405":
+          $ref: "#/components/responses/MethodNotAllowed"
+        "500":
+          $ref: "#/components/responses/StorageError"
+    post:
+      tags: [SDK keys]
+      summary: Create an SDK key
+      operationId: createSdkKey
+      description: The body is an empty object. The secret is returned once and is not written to the audit log.
+      parameters:
+        - $ref: "#/components/parameters/ProjectKey"
+        - $ref: "#/components/parameters/EnvironmentKey"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/EmptyObject"
+      responses:
+        "201":
+          description: The new key. secret will not be returned again.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/IssuedSdkKey"
+        "400":
+          $ref: "#/components/responses/ValidationError"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "405":
+          $ref: "#/components/responses/MethodNotAllowed"
+        "500":
+          $ref: "#/components/responses/StorageError"
+  /v1/projects/{projectKey}/environments/{environmentKey}/sdk-keys/{keyId}:
+    delete:
+      tags: [SDK keys]
+      summary: Revoke an SDK key
+      operationId: revokeSdkKey
+      description: A missing, already revoked, or wrong-environment id is 404. The next evaluation with that secret is 401.
+      parameters:
+        - $ref: "#/components/parameters/ProjectKey"
+        - $ref: "#/components/parameters/EnvironmentKey"
+        - $ref: "#/components/parameters/SdkKeyId"
+      responses:
+        "204":
+          description: The key is revoked. The body is an empty object.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/EmptyObject"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "405":
+          $ref: "#/components/responses/MethodNotAllowed"
+        "500":
+          $ref: "#/components/responses/StorageError"
+  /v1/projects/{projectKey}/environments/{environmentKey}/evaluation-config:
+    get:
+      tags: [Evaluation]
+      summary: Read the evaluation bundle
+      operationId: readEvaluationConfig
+      description: |
+        Variation lists and targeting, including salts. Secrets are absent.
+        An SDK key may read only its own environment. This document is the
+        evaluation cache payload.
+      parameters:
+        - $ref: "#/components/parameters/ProjectKey"
+        - $ref: "#/components/parameters/EnvironmentKey"
+      responses:
+        "200":
+          description: The flags in this environment, ordered by key.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/EvaluationBundle"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "405":
+          $ref: "#/components/responses/MethodNotAllowed"
+        "500":
+          $ref: "#/components/responses/StorageError"
+  /v1/evaluate:
+    post:
+      tags: [Evaluation]
+      summary: Evaluate one flag
+      operationId: evaluateOne
+      description: |
+        A management token must send project_key and environment_key. An SDK
+        key may omit them and uses its bound environment. A sent key that
+        does not match the SDK key is 403. An unknown flag is still 200,
+        with the caller default and reason flag_not_found.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/EvaluateOne"
+      responses:
+        "200":
+          description: The decision, including when the flag does not exist.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Decision"
+        "400":
+          $ref: "#/components/responses/ValidationError"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "405":
+          $ref: "#/components/responses/MethodNotAllowed"
+        "500":
+          $ref: "#/components/responses/StorageError"
+  /v1/evaluate-all:
+    post:
+      tags: [Evaluation]
+      summary: Evaluate every flag
+      operationId: evaluateAll
+      description: |
+        Same credential rules as evaluate one. There is no default. Flags
+        that do not exist are absent. Decisions are ordered by flag key.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/EvaluateAll"
+      responses:
+        "200":
+          description: One decision per flag. An environment with no flags returns an empty list.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DecisionList"
+        "400":
+          $ref: "#/components/responses/ValidationError"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "405":
+          $ref: "#/components/responses/MethodNotAllowed"
+        "500":
+          $ref: "#/components/responses/StorageError"
 components:
   securitySchemes:
     bearerAuth:
       type: http
       scheme: bearer
-      description: Opaque management token. A JWT is not accepted. An SDK key receives 403 on these routes.
+      description: Opaque management token or SDK key. A JWT is not accepted. An SDK key receives 403 on management routes.
   parameters:
     ProjectKey:
       name: projectKey
@@ -415,6 +596,14 @@ components:
       required: true
       schema:
         $ref: "#/components/schemas/PublicKey"
+    SdkKeyId:
+      name: keyId
+      in: path
+      required: true
+      description: Decimal credential id, with no leading zero.
+      schema:
+        type: string
+        pattern: "^[1-9][0-9]*$"
     Limit:
       name: limit
       in: query
@@ -885,3 +1074,168 @@ components:
           description: The full ordered list. It must start with the stored variations.
           items:
             $ref: "#/components/schemas/VariationValue"
+    EmptyObject:
+      type: object
+      additionalProperties: false
+    SdkKeyPage:
+      type: object
+      required: [items]
+      additionalProperties: false
+      properties:
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/SdkKey"
+    SdkKey:
+      type: object
+      required: [id, prefix, created_at]
+      additionalProperties: false
+      properties:
+        id:
+          type: integer
+        prefix:
+          type: string
+          minLength: 8
+          maxLength: 8
+        created_at:
+          type: string
+    IssuedSdkKey:
+      allOf:
+        - $ref: "#/components/schemas/SdkKey"
+        - type: object
+          required: [secret]
+          properties:
+            secret:
+              type: string
+              description: Returned once. Not stored in the audit log.
+    EvaluationBundle:
+      type: object
+      required: [project_key, environment_key, flags]
+      additionalProperties: false
+      properties:
+        project_key:
+          $ref: "#/components/schemas/PublicKey"
+        environment_key:
+          $ref: "#/components/schemas/PublicKey"
+        flags:
+          type: array
+          items:
+            $ref: "#/components/schemas/EvaluationFlag"
+    EvaluationFlag:
+      type: object
+      required:
+        - key
+        - variations
+        - enabled
+        - off_variation
+        - fallthrough
+        - rules
+        - targets
+        - prerequisites
+        - version
+      additionalProperties: false
+      properties:
+        key:
+          $ref: "#/components/schemas/PublicKey"
+        variations:
+          type: array
+          items:
+            $ref: "#/components/schemas/VariationValue"
+        enabled:
+          type: boolean
+        off_variation:
+          type: integer
+          minimum: 0
+        fallthrough:
+          $ref: "#/components/schemas/Serve"
+        rules:
+          type: array
+          items:
+            $ref: "#/components/schemas/Rule"
+        targets:
+          type: object
+          additionalProperties:
+            type: array
+            items:
+              type: string
+        prerequisites:
+          type: array
+          items:
+            $ref: "#/components/schemas/Prerequisite"
+        version:
+          type: integer
+          minimum: 1
+    EvaluateOne:
+      type: object
+      required: [flag_key, context, default]
+      additionalProperties: false
+      properties:
+        project_key:
+          $ref: "#/components/schemas/PublicKey"
+        environment_key:
+          $ref: "#/components/schemas/PublicKey"
+        flag_key:
+          type: string
+        context:
+          $ref: "#/components/schemas/Context"
+        default:
+          description: Any JSON value. Used only when the flag does not exist.
+    EvaluateAll:
+      type: object
+      required: [context]
+      additionalProperties: false
+      properties:
+        project_key:
+          $ref: "#/components/schemas/PublicKey"
+        environment_key:
+          $ref: "#/components/schemas/PublicKey"
+        context:
+          $ref: "#/components/schemas/Context"
+    Context:
+      type: object
+      additionalProperties: false
+      properties:
+        key:
+          type: string
+          minLength: 1
+          maxLength: 1024
+        attributes:
+          type: object
+          maxProperties: 50
+          additionalProperties: true
+          description: At most 50 names, each 1 to 64 characters. Values are scalars or arrays of scalars.
+    Decision:
+      type: object
+      required: [flag_key, value, variation_index, reason, rule_id, version]
+      additionalProperties: false
+      properties:
+        flag_key:
+          type: string
+        value: {}
+        variation_index:
+          type: integer
+          nullable: true
+        reason:
+          type: string
+          enum:
+            - off
+            - prerequisite_failed
+            - target_match
+            - rule_match
+            - fallthrough
+            - flag_not_found
+        rule_id:
+          type: string
+          nullable: true
+        version:
+          type: integer
+          nullable: true
+    DecisionList:
+      type: object
+      required: [decisions]
+      additionalProperties: false
+      properties:
+        decisions:
+          type: array
+          items:
+            $ref: "#/components/schemas/Decision"

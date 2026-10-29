@@ -28,6 +28,7 @@ class SettingsTests(unittest.TestCase):
         self.assertEqual(settings.cache, "memory")
         self.assertEqual(settings.bind_host, "127.0.0.1")
         self.assertEqual(settings.bind_port, 8080)
+        self.assertEqual(settings.eval_ttl_seconds, 5)
         self.assertEqual(settings.mysql_password, "")
         self.assertNotIn("mysql_password", repr(settings))
 

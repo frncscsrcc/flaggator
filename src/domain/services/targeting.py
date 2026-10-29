@@ -32,6 +32,7 @@ from domain.validation import (
 )
 from repositories.db import Connection
 from repositories.environments import EnvironmentRow, find_environment
+from repositories.eval_cache import EvaluationCache
 from repositories.flag_configs import (
     FlagConfigRow,
     find_config,
@@ -102,6 +103,7 @@ def replace_targeting(
     flag_key: str,
     environment_key: str,
     command: ReplaceTargeting,
+    evaluation_cache: EvaluationCache,
 ) -> FlagConfig:
     """Replace one environment's targeting and write an audit row.
 
@@ -156,6 +158,7 @@ def replace_targeting(
             _audit_document(current),
             _audit_document(updated),
         )
+        evaluation_cache.invalidate_environment(connection, project.key, environment.key)
     return updated
 
 

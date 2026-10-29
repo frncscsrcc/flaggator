@@ -103,6 +103,8 @@ The response for an environment includes its key and name. It does not include t
 | `GET` | `/v1/projects/{projectKey}/environments/{environmentKey}/sdk-keys` | List key ids, prefixes, and created timestamps. No secrets. |
 | `DELETE` | `/v1/projects/{projectKey}/environments/{environmentKey}/sdk-keys/{keyId}` | Revoke. Evaluation with that key becomes 401. |
 
+Create takes an empty object. The 201 response is `{ "id", "prefix", "created_at", "secret" }`. `id` is the decimal credential id. `prefix` is the first eight characters of the secret. List items are `{ "id", "prefix", "created_at" }` and do not include `secret`. The audit row stores the id and the prefix, not the secret. `keyId` that is missing, already revoked, or not a decimal id without a leading zero is 404.
+
 ### Flags
 
 | Method | Path | Behavior |
@@ -160,7 +162,9 @@ These require an SDK key or a management token. With an SDK key, the environment
 }
 ```
 
-Evaluation is always for one environment. `environment_key` is required for a management token. An SDK key already identifies the environment; a body that includes `project_key` or `environment_key` must match that key.
+Evaluation is always for one environment. `project_key` and `environment_key` are required for a management token. An SDK key already identifies the environment and may omit them; a body that includes `project_key` or `environment_key` must match that key, or the response is 403. A mismatch is 403 even when the other environment does not exist.
+
+`context.key`, when present, is a non-empty string of at most 1024 characters. `context.attributes` has at most 50 entries. Each name is 1 to 64 characters. Each value is a boolean, a finite number, a string of at most 1024 characters, or an array of those scalars. Null, objects, and nested arrays are rejected.
 
 Response:
 

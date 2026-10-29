@@ -206,7 +206,11 @@ class AuthenticationTests(unittest.TestCase):
         self.assertEqual(body["error"]["code"], "not_found")
 
     def test_sdk_key_cannot_call_a_management_path(self) -> None:
-        """An SDK key is 403 on /v1/projects and may reach an evaluation path."""
+        """An SDK key is 403 on /v1/projects and is authorized on evaluate.
+
+        GET is not the evaluate method, so the response is 405 rather than
+        403. That shows authorize let the SDK key through.
+        """
         sdk_token = "sdk-token-for-prod-environment"
         self._insert_sdk(sdk_token)
         forbidden_status, forbidden_body = call(
@@ -223,7 +227,7 @@ class AuthenticationTests(unittest.TestCase):
         )
         self.assertEqual(forbidden_status, "403 Forbidden")
         self.assertEqual(forbidden_body["error"]["code"], "forbidden")
-        self.assertEqual(allowed_status, "404 Not Found")
+        self.assertEqual(allowed_status, "405 Method Not Allowed")
 
     def test_record_change_commits_with_the_caller_and_rolls_back_with_it(self) -> None:
         """The audit row is in the same transaction as the caller's other writes."""

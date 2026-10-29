@@ -16,7 +16,9 @@ from cache.memory import MemoryCache
 from cache.null import NullCache
 from cache.protocol import Cache
 from domain.errors import ValidationError
+from domain.validation import DEFAULT_EVAL_TTL_SECONDS
 from repositories.db import Database
+from repositories.eval_cache import EvaluationCache
 from repositories.migrate import apply_migrations, default_migrations_directory
 
 
@@ -38,6 +40,7 @@ class Settings:
     cache: str
     bind_host: str
     bind_port: int
+    eval_ttl_seconds: int
     migrations_directory: Path
 
     def __repr__(self) -> str:
@@ -48,7 +51,7 @@ class Settings:
             f"mysql_host={self.mysql_host!r}, mysql_port={self.mysql_port!r}, "
             f"mysql_database={self.mysql_database!r}, mysql_user={self.mysql_user!r}, "
             f"cache={self.cache!r}, bind_host={self.bind_host!r}, "
-            f"bind_port={self.bind_port!r})"
+            f"bind_port={self.bind_port!r}, eval_ttl_seconds={self.eval_ttl_seconds!r})"
         )
 
 
@@ -88,6 +91,10 @@ def load_settings(environment: Mapping[str, str] | None = None) -> Settings:
         cache=source.get("FLAGGATOR_CACHE", "memory"),
         bind_host=source.get("FLAGGATOR_BIND_HOST", "127.0.0.1"),
         bind_port=_port(source.get("FLAGGATOR_BIND_PORT", "8080"), "bind_port"),
+        eval_ttl_seconds=_positive_int(
+            source.get("FLAGGATOR_EVAL_TTL_SECONDS", str(DEFAULT_EVAL_TTL_SECONDS)),
+            "eval_ttl_seconds",
+        ),
         migrations_directory=default_migrations_directory(),
     )
 
@@ -141,11 +148,15 @@ def prepare(settings: Settings) -> Runtime:
     """
     database = build_database(settings)
     apply_migrations(database, settings.migrations_directory)
+    cache = build_cache(settings)
     return Runtime(
         settings=settings,
         database=database,
-        cache=build_cache(settings),
-        application=Application(database),
+        cache=cache,
+        application=Application(
+            database,
+            EvaluationCache(cache, settings.eval_ttl_seconds),
+        ),
     )
 
 
@@ -176,6 +187,20 @@ def bootstrap_management_token(
     notice_stream.write("Save this token. It will not be shown again.\n")
     secret_stream.write(token + "\n")
     secret_stream.flush()
+
+
+def _positive_int(raw: str, field: str) -> int:
+    """Parse raw as an integer greater than zero.
+
+    field is the settings name used in the validation detail. Raises
+    ValidationError when raw is not a positive integer. Does not connect.
+    """
+    if not raw.isdigit() or raw == "0" or (len(raw) > 1 and raw[0] == "0"):
+        raise ValidationError(
+            "The value is not a positive integer.",
+            details=[{"field": field, "message": "Use a whole number greater than zero."}],
+        )
+    return int(raw)
 
 
 def _port(raw: str, field: str) -> int:

@@ -22,6 +22,7 @@ from domain.models.targeting import (
 )
 from domain.services import targeting as targeting_service
 from repositories.db import Connection
+from repositories.eval_cache import EvaluationCache
 
 _FIELDS = (
     "enabled",
@@ -60,6 +61,7 @@ def get_targeting(
 def replace_targeting(
     principal: Principal,
     connection: Connection,
+    evaluation_cache: EvaluationCache,
     request: Request,
     project_key: str,
     flag_key: str,
@@ -78,6 +80,7 @@ def replace_targeting(
         flag_key,
         environment_key,
         _replace_command(request),
+        evaluation_cache,
     )
     return Response(status=200, body=_document(config))
 

@@ -6,14 +6,17 @@ the connection the adapter opened.
 """
 
 from api.environments import create_environment, list_environments
+from api.evaluation import evaluate_all, evaluate_one, read_config
 from api.flags import create_flag, get_flag, list_flags, patch_flag
 from api.health import get_health
 from api.projects import create_project, get_project, list_projects
 from api.request import Request, Response
+from api.sdk_keys import create_sdk_key, list_sdk_keys, revoke_sdk_key
 from api.targeting import get_targeting, replace_targeting
 from domain.errors import Forbidden, StorageError
 from domain.models.principal import KIND_MANAGEMENT, KIND_SDK, Principal
 from repositories.db import Connection
+from repositories.eval_cache import EvaluationCache
 
 _EVALUATION_PATHS = ("/v1/evaluate", "/v1/evaluate-all")
 
@@ -22,11 +25,12 @@ def dispatch(
     request: Request,
     principal: Principal | None = None,
     connection: Connection | None = None,
+    evaluation_cache: EvaluationCache | None = None,
 ) -> Response:
     """Return the controller response for request.
 
     GET /health needs no credential. A different method on that path is
-    405. Project and environment routes need the principal and the open
+    405. Evaluation and management routes need the principal and the open
     connection the adapter already authenticated. Any other path is 404.
     Does not open a transaction and does not check the token.
     """
@@ -34,7 +38,9 @@ def dispatch(
         if request.method == "GET":
             return get_health(request)
         return method_not_allowed("GET")
-    return _management_route(request, principal, connection)
+    if request.path in _EVALUATION_PATHS:
+        return _evaluate(request, principal, connection, evaluation_cache)
+    return _management_route(request, principal, connection, evaluation_cache)
 
 
 def requires_credential(request: Request) -> bool:
@@ -52,21 +58,64 @@ def authorize(request: Request, principal: Principal) -> None:
 
     A management token may continue, and the dispatcher then returns 404
     for a path that has no controller yet. An SDK key may continue only
-    for an evaluation path. Does not compare the SDK key's environment
-    with the request; that check belongs to the evaluation service. Does
-    not commit.
+    for evaluate, evaluate-all, and evaluation-config. Does not compare
+    the SDK key's environment with the request; that check belongs to the
+    evaluation service. Does not commit.
     """
     if principal.kind == KIND_MANAGEMENT:
         return
-    if principal.kind == KIND_SDK and request.path in _EVALUATION_PATHS:
+    if principal.kind == KIND_SDK and _sdk_may_read(request):
         return
     raise Forbidden("The credential may not call this route.")
+
+
+def _evaluate(
+    request: Request,
+    principal: Principal | None,
+    connection: Connection | None,
+    evaluation_cache: EvaluationCache | None,
+) -> Response:
+    """Handle POST /v1/evaluate and POST /v1/evaluate-all.
+
+    Any other method is 405. A missing session raises StorageError. Does
+    not commit.
+    """
+    session = _session(principal, connection)
+    cache = _cache(evaluation_cache)
+    if request.path == "/v1/evaluate":
+        if request.method != "POST":
+            return method_not_allowed("POST")
+        return evaluate_one(session[0], session[1], cache, request)
+    if request.method != "POST":
+        return method_not_allowed("POST")
+    return evaluate_all(session[0], session[1], cache, request)
+
+
+def _sdk_may_read(request: Request) -> bool:
+    """Return True when an SDK key is allowed to reach this path.
+
+    The environment match is not checked here. Does not read the database.
+    """
+    if request.path in _EVALUATION_PATHS:
+        return True
+    parts = request.path.split("/")
+    return (
+        len(parts) == 7
+        and parts[0] == ""
+        and parts[1] == "v1"
+        and parts[2] == "projects"
+        and parts[4] == "environments"
+        and parts[6] == "evaluation-config"
+        and parts[3] != ""
+        and parts[5] != ""
+    )
 
 
 def _management_route(
     request: Request,
     principal: Principal | None,
     connection: Connection | None,
+    evaluation_cache: EvaluationCache | None,
 ) -> Response:
     """Dispatch a project, environment, flag, or targeting path, or 404.
 
@@ -91,14 +140,28 @@ def _management_route(
     if len(parts) == 5 and parts[4] == "environments":
         return _environments_collection(request, session[0], session[1], project_key)
     if len(parts) == 5 and parts[4] == "flags":
-        return _flags_collection(request, session[0], session[1], project_key)
+        return _flags_collection(request, session[0], session[1], evaluation_cache, project_key)
     if len(parts) == 6 and parts[4] == "flags":
-        return _one_flag(request, session[0], session[1], project_key, parts[5])
+        return _one_flag(request, session[0], session[1], evaluation_cache, project_key, parts[5])
+    if len(parts) == 7 and parts[4] == "environments" and parts[6] == "sdk-keys":
+        return _sdk_keys(request, session[0], session[1], project_key, parts[5])
+    if len(parts) == 7 and parts[4] == "environments" and parts[6] == "evaluation-config":
+        return _evaluation_config(
+            request,
+            session[0],
+            session[1],
+            evaluation_cache,
+            project_key,
+            parts[5],
+        )
+    if len(parts) == 8 and parts[4] == "environments" and parts[6] == "sdk-keys":
+        return _one_sdk_key(request, session[0], session[1], project_key, parts[5], parts[7])
     if len(parts) == 8 and parts[4] == "flags" and parts[6] == "environments":
         return _flag_environment(
             request,
             session[0],
             session[1],
+            evaluation_cache,
             project_key,
             parts[5],
             parts[7],
@@ -143,6 +206,7 @@ def _flags_collection(
     request: Request,
     principal: Principal,
     connection: Connection,
+    evaluation_cache: EvaluationCache | None,
     project_key: str,
 ) -> Response:
     """Handle the flag collection under project_key.
@@ -152,7 +216,7 @@ def _flags_collection(
     if request.method == "GET":
         return list_flags(principal, connection, request, project_key)
     if request.method == "POST":
-        return create_flag(principal, connection, request, project_key)
+        return create_flag(principal, connection, _cache(evaluation_cache), request, project_key)
     return method_not_allowed("GET or POST")
 
 
@@ -160,6 +224,7 @@ def _one_flag(
     request: Request,
     principal: Principal,
     connection: Connection,
+    evaluation_cache: EvaluationCache | None,
     project_key: str,
     flag_key: str,
 ) -> Response:
@@ -170,14 +235,80 @@ def _one_flag(
     if request.method == "GET":
         return get_flag(principal, connection, project_key, flag_key)
     if request.method == "PATCH":
-        return patch_flag(principal, connection, request, project_key, flag_key)
+        return patch_flag(
+            principal,
+            connection,
+            _cache(evaluation_cache),
+            request,
+            project_key,
+            flag_key,
+        )
     return method_not_allowed("GET or PATCH")
+
+
+def _sdk_keys(
+    request: Request,
+    principal: Principal,
+    connection: Connection,
+    project_key: str,
+    environment_key: str,
+) -> Response:
+    """Handle SDK keys for one environment.
+
+    GET lists and POST creates. Any other method is 405. Does not commit.
+    """
+    if request.method == "GET":
+        return list_sdk_keys(principal, connection, project_key, environment_key)
+    if request.method == "POST":
+        return create_sdk_key(principal, connection, request, project_key, environment_key)
+    return method_not_allowed("GET or POST")
+
+
+def _one_sdk_key(
+    request: Request,
+    principal: Principal,
+    connection: Connection,
+    project_key: str,
+    environment_key: str,
+    key_id: str,
+) -> Response:
+    """Revoke one SDK key.
+
+    DELETE is the only method. Does not commit.
+    """
+    if request.method != "DELETE":
+        return method_not_allowed("DELETE")
+    return revoke_sdk_key(principal, connection, project_key, environment_key, key_id)
+
+
+def _evaluation_config(
+    request: Request,
+    principal: Principal,
+    connection: Connection,
+    evaluation_cache: EvaluationCache | None,
+    project_key: str,
+    environment_key: str,
+) -> Response:
+    """Return the evaluation bundle for one environment.
+
+    GET is the only method. Does not commit.
+    """
+    if request.method != "GET":
+        return method_not_allowed("GET")
+    return read_config(
+        principal,
+        connection,
+        _cache(evaluation_cache),
+        project_key,
+        environment_key,
+    )
 
 
 def _flag_environment(
     request: Request,
     principal: Principal,
     connection: Connection,
+    evaluation_cache: EvaluationCache | None,
     project_key: str,
     flag_key: str,
     environment_key: str,
@@ -193,12 +324,24 @@ def _flag_environment(
         return replace_targeting(
             principal,
             connection,
+            _cache(evaluation_cache),
             request,
             project_key,
             flag_key,
             environment_key,
         )
     return method_not_allowed("GET or PUT")
+
+
+def _cache(evaluation_cache: EvaluationCache | None) -> EvaluationCache:
+    """Return the evaluation cache the adapter built.
+
+    Raises StorageError when a route that reads or invalidates the bundle
+    was called without one. Does not connect.
+    """
+    if evaluation_cache is None:
+        raise StorageError()
+    return evaluation_cache
 
 
 def _session(

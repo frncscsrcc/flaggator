@@ -12,6 +12,7 @@ from domain.models.flag import CreateFlag, Flag, FlagConfig, FlagSummary, PatchF
 from domain.models.principal import Principal
 from domain.services import flags as flag_service
 from repositories.db import Connection
+from repositories.eval_cache import EvaluationCache
 
 _CREATE_FIELDS = ("key", "name", "description", "variations")
 _PATCH_FIELDS = ("name", "description", "variations")
@@ -20,6 +21,7 @@ _PATCH_FIELDS = ("name", "description", "variations")
 def create_flag(
     principal: Principal,
     connection: Connection,
+    evaluation_cache: EvaluationCache,
     request: Request,
     project_key: str,
 ) -> Response:
@@ -29,7 +31,13 @@ def create_flag(
     each environment. Domain failures propagate. Does not commit; the
     service does.
     """
-    flag = flag_service.create_flag(connection, principal, project_key, _create_command(request))
+    flag = flag_service.create_flag(
+        connection,
+        principal,
+        project_key,
+        _create_command(request),
+        evaluation_cache,
+    )
     return Response(status=201, body=_flag_document(flag))
 
 
@@ -73,6 +81,7 @@ def get_flag(
 def patch_flag(
     principal: Principal,
     connection: Connection,
+    evaluation_cache: EvaluationCache,
     request: Request,
     project_key: str,
     flag_key: str,
@@ -88,6 +97,7 @@ def patch_flag(
         project_key,
         flag_key,
         _patch_command(request),
+        evaluation_cache,
     )
     return Response(status=200, body=_flag_document(flag))
 

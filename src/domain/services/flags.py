@@ -30,7 +30,8 @@ from domain.validation import (
     variation_text,
 )
 from repositories.db import Connection
-from repositories.environments import find_environment, list_environment_ids
+from repositories.environments import find_environment, list_environment_ids, list_environment_keys
+from repositories.eval_cache import EvaluationCache
 from repositories.flags import (
     FlagRow,
     find_flag,
@@ -56,6 +57,7 @@ def create_flag(
     principal: Principal,
     project_key: str,
     command: CreateFlag,
+    evaluation_cache: EvaluationCache,
 ) -> Flag:
     """Insert a flag, its variations, a disabled config per environment, and an audit row.
 
@@ -80,6 +82,11 @@ def create_flag(
             insert_variation(connection, flag_id, index, text)
         for environment_id in list_environment_ids(connection, project.id):
             insert_disabled_config(connection, flag_id, environment_id)
+        evaluation_cache.invalidate_project(
+            connection,
+            project.key,
+            list_environment_keys(connection, project.id),
+        )
         flag = _load_flag(connection, project.id, key)
         record_change(
             connection,
@@ -147,6 +154,7 @@ def patch_flag(
     project_key: str,
     flag_key: str,
     command: PatchFlag,
+    evaluation_cache: EvaluationCache,
 ) -> Flag:
     """Update the name and description, and append variations.
 
@@ -171,6 +179,12 @@ def patch_flag(
         update_flag_text(connection, row.id, stored_name, stored_description)
         for offset, text in enumerate(tail):
             insert_variation(connection, row.id, len(current.variations) + offset, text)
+        if tail:
+            evaluation_cache.invalidate_project(
+                connection,
+                project.key,
+                list_environment_keys(connection, project.id),
+            )
         updated = _load_flag(connection, project.id, current.key)
         record_change(
             connection,

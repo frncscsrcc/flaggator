@@ -15,13 +15,17 @@ from api.request import Request, Response
 from api.routes import authorize, dispatch, requires_credential
 from domain.errors import DomainError, StorageError, ValidationError
 from domain.services.authentication import authenticate
+from cache.null import NullCache
+from domain.validation import DEFAULT_EVAL_TTL_SECONDS
 from repositories.db import Database
+from repositories.eval_cache import EvaluationCache
 
 StartResponse = Callable[[str, list[tuple[str, str]]], object]
 
 _REASONS = {
     200: "OK",
     201: "Created",
+    204: "No Content",
     400: "Bad Request",
     401: "Unauthorized",
     403: "Forbidden",
@@ -51,14 +55,23 @@ class Application:
     object does not listen. serve() does that.
     """
 
-    def __init__(self, database: Database | None = None) -> None:
-        """Keep database for credential lookup.
+    def __init__(
+        self,
+        database: Database | None = None,
+        evaluation_cache: EvaluationCache | None = None,
+    ) -> None:
+        """Keep database and the evaluation cache.
 
         database may be None only when the caller will request GET /health.
-        An authenticated path without a database becomes a generic storage
-        error. Does not open a connection.
+        When evaluation_cache is omitted, a cache that stores nothing is
+        used so a write still registers a harmless delete. Composition is
+        the place that selects the process cache. Does not open a connection.
         """
         self._database = database
+        if evaluation_cache is None:
+            self._evaluation_cache = EvaluationCache(NullCache(), DEFAULT_EVAL_TTL_SECONDS)
+        else:
+            self._evaluation_cache = evaluation_cache
 
     def __call__(self, environ: dict, start_response: StartResponse) -> list[bytes]:
         """Handle one request and return the body as a list of byte strings.
@@ -92,7 +105,7 @@ class Application:
         try:
             principal = authenticate(connection, request.headers.get("authorization"))
             authorize(request, principal)
-            return dispatch(request, principal, connection)
+            return dispatch(request, principal, connection, self._evaluation_cache)
         finally:
             connection.close()
 

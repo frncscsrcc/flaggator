@@ -7,8 +7,9 @@ principal may call a route, and it does not commit.
 import hashlib
 import hmac
 from collections.abc import Mapping
+from dataclasses import dataclass
 
-from domain.models.principal import Principal
+from domain.models.principal import KIND_SDK, Principal
 from repositories.db import Connection
 
 PREFIX_LENGTH = 8
@@ -89,6 +90,65 @@ def find_active_principal(connection: Connection, token: str) -> Principal | Non
         environment_id=scoped_environment,
         prefix=str(row["prefix"]),
     )
+
+
+@dataclass(frozen=True)
+class SdkKeyRow:
+    """One active SDK key as a list shows it.
+
+    The secret and the hash are absent. prefix is the non-secret label.
+    """
+
+    id: int
+    prefix: str
+    created_at: str
+
+
+def list_sdk_keys(connection: Connection, environment_id: int) -> list[SdkKeyRow]:
+    """Return active SDK keys for one environment, ordered by id.
+
+    Revoked rows are absent. An environment with no keys returns an empty
+    list. Does not commit and does not return a secret.
+    """
+    rows = connection.execute(
+        """
+        SELECT id, prefix, created_at
+          FROM api_credentials
+         WHERE kind = ? AND environment_id = ? AND revoked_at IS NULL
+         ORDER BY id
+        """,
+        (KIND_SDK, environment_id),
+    ).fetchall()
+    return [
+        SdkKeyRow(id=int(row["id"]), prefix=str(row["prefix"]), created_at=str(row["created_at"]))
+        for row in rows
+    ]
+
+
+def revoke_sdk_key(
+    connection: Connection,
+    credential_id: int,
+    environment_id: int,
+    revoked_at: str,
+) -> int:
+    """Revoke one active SDK key in environment_id.
+
+    credential_id is the integer id from the list. Returns how many rows
+    changed. Zero means the id is missing, revoked, or not an SDK key of
+    this environment. Does not commit.
+    """
+    cursor = connection.execute(
+        """
+        UPDATE api_credentials
+           SET revoked_at = ?
+         WHERE id = ?
+           AND kind = ?
+           AND environment_id = ?
+           AND revoked_at IS NULL
+        """,
+        (revoked_at, credential_id, KIND_SDK, environment_id),
+    )
+    return cursor.rowcount
 
 
 def _stored_hash(row: Mapping[str, object] | None) -> str:

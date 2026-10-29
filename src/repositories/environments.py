@@ -65,6 +65,67 @@ def find_environment(
     return EnvironmentRow(id=int(row["id"]), key=str(row["key"]), name=str(row["name"]))
 
 
+@dataclass(frozen=True)
+class EnvironmentScope:
+    """The project and environment a credential is bound to.
+
+    Ids stay in the service. Keys are what the API and the cache use.
+    """
+
+    project_id: int
+    project_key: str
+    environment_id: int
+    environment_key: str
+
+
+def find_environment_scope(
+    connection: Connection,
+    environment_id: int,
+) -> EnvironmentScope | None:
+    """Return the project and environment for environment_id.
+
+    Returns None when no environment has that id. Does not commit.
+    """
+    row = connection.execute(
+        """
+        SELECT environments.id AS environment_id,
+               environments.`key` AS environment_key,
+               projects.id AS project_id,
+               projects.`key` AS project_key
+          FROM environments
+          JOIN projects ON projects.id = environments.project_id
+         WHERE environments.id = ?
+        """,
+        (environment_id,),
+    ).fetchone()
+    if row is None:
+        return None
+    return EnvironmentScope(
+        project_id=int(row["project_id"]),
+        project_key=str(row["project_key"]),
+        environment_id=int(row["environment_id"]),
+        environment_key=str(row["environment_key"]),
+    )
+
+
+def list_environment_keys(connection: Connection, project_id: int) -> list[str]:
+    """Return every environment key in project_id, ordered by key.
+
+    An empty project returns an empty list. Does not commit. Callers use
+    this to drop one cache entry per environment after a commit.
+    """
+    rows = connection.execute(
+        """
+        SELECT `key`
+          FROM environments
+         WHERE project_id = ?
+         ORDER BY `key`
+        """,
+        (project_id,),
+    ).fetchall()
+    return [str(row["key"]) for row in rows]
+
+
 def list_environment_ids(connection: Connection, project_id: int) -> list[int]:
     """Return the environment ids in project_id, ordered by id.
 
