@@ -1,4 +1,4 @@
-"""The package layout imports, and the process entry does not serve yet."""
+"""The package layout imports, and an unknown process argument does not listen."""
 
 import sys
 import unittest
@@ -39,15 +39,12 @@ class LayoutTests(unittest.TestCase):
         for package in packages:
             self.assertTrue(package.__doc__)
 
-    def test_main_does_not_serve(self) -> None:
-        """main exits before a listener exists.
+    def test_an_unknown_argument_does_not_serve(self) -> None:
+        """An argument other than bootstrap exits before a port is bound.
 
-        A successful return would look like a running server. The process
-        entry phase replaces this behavior.
+        No arguments is the serve command. This test does not call it,
+        because that call listens until the process is killed.
         """
         with self.assertRaises(SystemExit) as caught:
-            main.main()
-        self.assertEqual(
-            caught.exception.code,
-            "flaggator cannot serve yet. The HTTP listener is added in a later phase.",
-        )
+            main.main(["listen"])
+        self.assertEqual(caught.exception.code, "Usage: python -m main [bootstrap]")

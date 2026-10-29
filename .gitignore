@@ -1,0 +1,14 @@
+.cursor/
+.venv/
+.html/
+
+__pycache__/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.cache/
+*.pyc
+
+flaggator.db
+flaggator.db-wal
+flaggator.db-shm

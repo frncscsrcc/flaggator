@@ -171,7 +171,7 @@ def serve(application: Application, host: str, port: int) -> None:
     """Listen for HTTP requests until the process is killed.
 
     Binds host and port. Each request runs on its own thread. Does not
-    return. The process entry calls this in a later phase; tests call the
+    return. python -m main calls this. Tests of a single route call the
     application directly and do not bind a port.
     """
     server = make_server(host, port, application, server_class=ThreadingWSGIServer)
