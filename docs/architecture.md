@@ -94,10 +94,10 @@ Evaluation of a single request is a read. It still uses one connection so a flag
 The evaluator is a function:
 
 ```
-evaluate(config, context) → decision
+evaluate(flag_key, definitions, context) → decision
 ```
 
-`config` is the flag's variation list plus one environment's targeting. `context` is the caller's key and attributes. `decision` is the variation value, its index, a reason code, and the config version.
+`definitions` holds every flag in the environment. Each one is that flag's variation list plus its targeting. Prerequisites call the same function on another key in that map. `context` is the caller's key and attributes. `decision` is the variation value, its index, a reason code, the rule id when a rule matched, and the config version. A key that is not in `definitions` returns the caller-supplied default with reason `flag_not_found`.
 
 The function is deterministic. The same inputs produce the same decision. Time is not an input. Randomness is not an input. Percentage rollouts hash a stable salt with the context key, as specified in [Domain](domain.md).
 

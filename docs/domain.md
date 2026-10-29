@@ -159,7 +159,7 @@ Unknown flag: the evaluate endpoint does not invent a variation. The caller supp
 
 Writes reject a prerequisite list that contains a cycle, including a flag that requires itself, using the configs currently stored in that environment.
 
-Evaluation also keeps the set of flag keys already entered. Re-entering a key yields `prerequisite_failed` for the flag that closed the cycle. Depth is capped; the cap is in [Security](security.md). Both checks exist so a bad write and a racing pair of writes cannot make evaluation recurse without bound.
+Evaluation also keeps the set of flag keys already entered on the current walk. A key is removed when that flag's decision has been produced, so two flags may require the same third flag. Re-entering a key that is still on the walk yields `prerequisite_failed` for the flag that closed the cycle. The requested flag is depth 1. A flag entered deeper than the cap returns `prerequisite_failed` and its prerequisites are not evaluated. The cap is in [Security](security.md). Both checks exist so a bad write and a racing pair of writes cannot make evaluation recurse without bound.
 
 ### Bucketing
 

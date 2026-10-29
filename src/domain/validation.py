@@ -29,6 +29,8 @@ MAX_CLAUSE_VALUES = 50
 MAX_TARGETS = 1000
 MAX_ATTRIBUTE_NAME_LENGTH = 64
 ROLLOUT_WEIGHT_TOTAL = 100000
+# The requested flag counts as depth 1. A flag past this depth is not walked.
+MAX_PREREQUISITE_DEPTH = 10
 
 
 def is_public_key(value: str) -> bool:
