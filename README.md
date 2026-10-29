@@ -41,6 +41,7 @@ Dependency direction is one way: `api` → `domain services` → `repositories`.
 | [Cache](docs/cache.md) | Cache protocol, what is stored, invalidation |
 | [Security](docs/security.md) | Tokens, authorization, injection, audit, limits |
 | [Code style](docs/style.md) | How functions are named, commented, and kept explicit |
+| [Example](docs/example.md) | A checkout rollout, from the management token to an SDK call |
 
 ## Run
 
@@ -101,6 +102,8 @@ curl -s -X POST http://127.0.0.1:8080/v1/evaluate \
 ```
 
 The decision is `value` `true`, `variation_index` `1`, `reason` `fallthrough`, and `version` `2`.
+
+The same path, with the country rollout and an SDK key, is written out in [Example](docs/example.md).
 
 ## Status
 
