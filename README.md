@@ -98,13 +98,9 @@ Evaluate it. The flag exists, so `default` is ignored:
 curl -s -X POST http://127.0.0.1:8080/v1/evaluate \
   -H "Authorization: Bearer $TOKEN" \
   -H "Content-Type: application/json" \
-  -d '{"project_key":"shop","environment_key":"prod","flag_key":"checkout-v2","context":{"subject":"user-1","attributes":{}},"default":false}'
+  -d '{"project_key":"shop","environment_key":"prod","flag_key":"checkout-v2","context":{"key":"user-1","attributes":{}},"default":false}'
 ```
 
 The decision is `value` `true`, `variation_index` `1`, `reason` `fallthrough`, and `version` `2`.
 
-The same path, with the country rollout and an SDK token, is written out in [Example](docs/example.md).
-
-## Status
-
-`python -m main bootstrap` creates a management token. `python -m main` applies migrations and listens. The license is not chosen yet.
+The same path, with the country rollout and an SDK key, is written out in [Example](docs/example.md).

@@ -4,6 +4,7 @@ version = "0.0.0"
 description = "A locally deployable, API-first feature-flag service."
 requires-python = ">=3.11"
 readme = "README.md"
+license = { text = "MIT" }
 
 [project.optional-dependencies]
 mysql = ["PyMySQL"]
