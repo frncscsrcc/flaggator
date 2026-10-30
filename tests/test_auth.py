@@ -205,11 +205,11 @@ class AuthenticationTests(unittest.TestCase):
         self.assertEqual(status, "404 Not Found")
         self.assertEqual(body["error"]["code"], "not_found")
 
-    def test_sdk_key_cannot_call_a_management_path(self) -> None:
-        """An SDK key is 403 on /v1/projects and is authorized on evaluate.
+    def test_sdk_token_cannot_call_a_management_path(self) -> None:
+        """An SDK token is 403 on /v1/projects and is authorized on evaluate.
 
         GET is not the evaluate method, so the response is 405 rather than
-        403. That shows authorize let the SDK key through.
+        403. That shows authorize let the SDK token through.
         """
         sdk_token = "sdk-token-for-prod-environment"
         self._insert_sdk(sdk_token)

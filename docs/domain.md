@@ -13,17 +13,17 @@ Proposals [P2](decisions.md), [P5](decisions.md), [P9](decisions.md), and [P10](
 | Flag | A named switch inside a project. Identified by a `key` unique within the project. The key is immutable. |
 | Variation | One possible value of a flag. Variations are ordered. The index in that order is the variation's identity. |
 | Flag configuration | The targeting of one flag in one environment: on/off, off variation, targets, rules, fallthrough, prerequisites, version. |
-| Context | The subject a caller asks about. It has a `key` and a map of attributes. |
-| Target | An explicit pin of one context key to one variation index. |
+| Context | The subject a caller asks about. It has a `subject` and a map of attributes. |
+| Target | An explicit pin of one subject to one variation index. |
 | Rule | An ordered predicate. The first matching rule wins. |
 | Clause | One comparison inside a rule. Every clause in the rule must match. |
-| Rollout | A weighted split across variations, bucketed by a hash of the context key. |
+| Rollout | A weighted split across variations, bucketed by a hash of the subject. |
 | Fallthrough | What is served when the flag is on and no target or rule matches. A variation index, or a rollout. |
 | Off variation | The variation served when the flag is off, or when a prerequisite fails. |
 | Prerequisite | Another flag in the same environment that must evaluate to a given variation before this flag's own rules run. |
 | Decision | The result of evaluation: variation index, JSON value, reason, config version. |
 | Salt | A stable string mixed into the rollout hash so buckets do not move when unrelated rules change. |
-| Principal | The authenticated caller: a management token or an SDK key. |
+| Principal | The authenticated caller: a management token or an SDK token. |
 
 ## Identity and scope
 
@@ -58,7 +58,7 @@ Values are JSON: booleans, numbers, strings, arrays, and objects. A variation va
 
 ```json
 {
-  "key": "user-123",
+  "subject": "user-123",
   "attributes": {
     "country": "IT",
     "plan": "pro",
@@ -67,7 +67,7 @@ Values are JSON: booleans, numbers, strings, arrays, and objects. A variation va
 }
 ```
 
-- `key` is a non-empty string. Individual targets and rollouts use it.
+- `subject` is a non-empty string. Individual targets and rollouts use it.
 - `attributes` is a flat map. Values are JSON scalars (string, number, boolean) or arrays of scalars. Nested objects are out of scope for v1.
 - Attribute names are case-sensitive.
 - A missing attribute does not match a clause, including negative operators such as `neq` and `not_in`. Absence is not a value.
@@ -82,7 +82,7 @@ For one flag in one environment, the configuration the evaluator receives is:
 | --- | --- |
 | `enabled` | When false, serve the off variation immediately. |
 | `off_variation` | Variation index served when the flag is off or a prerequisite fails. |
-| `targets` | Map of variation index → list of context keys. |
+| `targets` | Map of variation index → subjects, or subjects plus segment keys. |
 | `rules` | Ordered list. First match wins. |
 | `fallthrough` | Variation index or rollout. |
 | `prerequisites` | List of `{flag_key, variation_index}`. |
@@ -147,11 +147,11 @@ Order:
 
 1. **Off.** If `enabled` is false, return `off_variation` with reason `off`.
 2. **Prerequisites.** Evaluate each prerequisite flag for the same context. If any prerequisite's resulting variation index is not the required index, return this flag's `off_variation` with reason `prerequisite_failed`.
-3. **Targets.** If the context has a key and that key is listed under a variation, return that variation with reason `target_match`. A key listed under two variations is a `ValidationError` at write time, so evaluation can treat the lists as disjoint.
+3. **Targets.** If the context has a subject, walk the variation indexes in stored order. An index matches when the subject is in its subject list or in a segment that index cites. Return the first match with reason `target_match`. Inline lists do not share a subject, and one segment key is not cited by two indexes of the same flag. A later edit of a segment can still place one subject under two indexes; evaluation uses the first. A context with no subject does not enter this step.
 4. **Rules.** Walk rules in order. A rule matches when every clause matches. On the first matching rule:
    - If the rule serves a variation, return it with reason `rule_match`.
-   - If the rule serves a rollout, bucket the context. If the context has no key, the rule does not match and walking continues. If the context has a key, return the bucketed variation with reason `rule_match`.
-5. **Fallthrough.** If the fallthrough is a variation, return it with reason `fallthrough`. If it is a rollout, bucket when the context has a key and return reason `fallthrough`. If the context has no key, return `off_variation` with reason `fallthrough`.
+   - If the rule serves a rollout, bucket the context. If the context has no subject, the rule does not match and walking continues. If the context has a subject, return the bucketed variation with reason `rule_match`.
+5. **Fallthrough.** If the fallthrough is a variation, return it with reason `fallthrough`. If it is a rollout, bucket when the context has a subject and return reason `fallthrough`. If the context has no subject, return `off_variation` with reason `fallthrough`.
 
 Unknown flag: the evaluate endpoint does not invent a variation. The caller supplies a default value on the request. The service returns that default with reason `flag_not_found` and no config version. A management read of a missing flag is `NotFound` instead. The default exists so an application can keep a safe value beside the call.
 
@@ -166,7 +166,7 @@ Evaluation also keeps the set of flag keys already entered on the current walk. 
 Bucketing is deterministic. It does not use a random source.
 
 ```
-material = flag_key + ":" + salt + ":" + context_key
+material = flag_key + ":" + salt + ":" + subject
 digest   = SHA-256(material)          # bytes, hashlib
 bucket   = uint32_be(digest[0:4]) % 100000
 ```
@@ -185,10 +185,10 @@ SHA-256 is the standard-library hash. Bucket assignments are **not** compatible 
 | --- | --- |
 | `off` | Flag is disabled. |
 | `prerequisite_failed` | A prerequisite did not evaluate to the required variation, or a cycle/depth guard tripped. |
-| `target_match` | Context key is individually targeted. |
+| `target_match` | The subject is pinned to a variation, by name or by a segment that variation cites. |
 | `rule_match` | The first matching rule served this variation. The decision includes the rule id. |
 | `fallthrough` | No target or rule selected a variation. |
-| `flag_not_found` | Evaluate was asked for a key that is not in the project. The value is the caller's default. |
+| `flag_not_found` | Evaluate was asked for a flag key that is not in the project. The value is the caller's default. |
 
 Each decision also includes the config `version` when a flag existed, so a caller can tell which targeting produced the result.
 
@@ -209,7 +209,7 @@ Each decision also includes the config `version` when a flag existed, so a calle
 Flag `checkout-v2` in environment `prod`, variations `false` (0) and `true` (1), enabled.
 
 - Off variation: `0`
-- Target: context key `alice` → variation `1`
+- Target: subject `alice` → variation `1`
 - Rule `r1`: `country in ["IT", "FR"]` serves a rollout salt `s1`, weights `1 → 10000`, `0 → 90000`
 - Fallthrough: variation `0`
 
@@ -219,8 +219,14 @@ Flag `checkout-v2` in environment `prod`, variations `false` (0) and `true` (1),
 | `{key: alice, country: US}` | `true` | `target_match` |
 | `{key: bob, country: IT}` | bucket of `checkout-v2:s1:bob` | `rule_match` |
 | `{key: bob, country: US}` | `false` | `fallthrough` |
-| `{country: IT}` and no key | `false` | `fallthrough` (the rollout rule does not match without a key; fallthrough is variation `0`) |
+| `{country: IT}` and no subject | `false` | `fallthrough` (the rollout rule does not match without a subject; fallthrough is variation `0`) |
 
 ## Segments
 
-A segment is a named set of context keys or clauses, reusable across flags. v1 rules do not reference segments ([P10](decisions.md)). Clause operators stay a closed list so a later `segment_match` operator can be added without changing the evaluation order.
+A segment is a named set of subjects in one environment, reusable across the flags of that environment. `key` is the slug a target cites. `name` is the display label and is not read during evaluation. `subjects` is the membership. A write replaces that list as a whole. An empty list matches nobody.
+
+A target value is either a list of subjects or an object `{ "subjects", "segments" }`. The two sets are a union for that variation index. Segment keys are public keys of segments in the same environment. A missing segment is rejected when the targeting document is saved.
+
+Deleting a segment that a target in the same environment still cites is a conflict. Changing the membership drops that environment's evaluation bundle after the write commits. Creating or deleting an uncited segment does not change a decision.
+
+A segment does not contain clauses. Rules do not use a `segment_match` operator ([P10](decisions.md)). Clause operators stay a closed list so that operator can be added later without changing the evaluation order.

@@ -113,7 +113,7 @@ class EntrypointTests(unittest.TestCase):
                 "project_key": "shop",
                 "environment_key": "prod",
                 "flag_key": "checkout-v2",
-                "context": {"key": "user-1", "attributes": {}},
+                "context": {"subject": "user-1", "attributes": {}},
                 "default": False,
             },
         )

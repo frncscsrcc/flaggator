@@ -1,4 +1,4 @@
-"""SDK keys, evaluation routes, and the evaluation cache."""
+"""SDK tokens, evaluation routes, and the evaluation cache."""
 
 import io
 import json
@@ -72,7 +72,7 @@ class EvaluationTests(unittest.TestCase):
             {
                 "project_key": "shop",
                 "environment_key": "prod",
-                "context": {"key": "alice", "attributes": {"country": "US"}},
+                "context": {"subject": "alice", "attributes": {"country": "US"}},
             },
         )
         self.assertEqual(alice["value"], True)
@@ -94,8 +94,8 @@ class EvaluationTests(unittest.TestCase):
         self.assertEqual([item["flag_key"] for item in all_body["decisions"]], ["alpha", "checkout-v2"])
         self.assertNotIn("missing", [item["flag_key"] for item in all_body["decisions"]])
 
-    def test_sdk_key_uses_its_environment_and_revoke_rejects_it(self) -> None:
-        """An SDK key evaluates its environment, and a mismatch is 403.
+    def test_sdk_token_uses_its_environment_and_revoke_rejects_it(self) -> None:
+        """An SDK token evaluates its environment, and a mismatch is 403.
 
         The list and the audit row contain the prefix and not the secret.
         After revoke the same secret is 401.
@@ -104,17 +104,17 @@ class EvaluationTests(unittest.TestCase):
         self.put_checkout()
         created_status, created = self.call(
             "POST",
-            "/v1/projects/shop/environments/prod/sdk-keys",
+            "/v1/projects/shop/environments/prod/sdk-tokens",
             {"name": "checkout-api"},
         )
         self.assertEqual(created_status, "201 Created")
         secret = created["secret"]
         self.assertEqual(created["name"], "checkout-api")
         self.assertEqual(created["prefix"], secret[:8])
-        listed_status, listed = self.call("GET", "/v1/projects/shop/environments/prod/sdk-keys")
+        listed_status, listed = self.call("GET", "/v1/projects/shop/environments/prod/sdk-tokens")
         duplicate_status, duplicate = self.call(
             "POST",
-            "/v1/projects/shop/environments/prod/sdk-keys",
+            "/v1/projects/shop/environments/prod/sdk-tokens",
             {"name": "checkout-api"},
         )
         own_status, own = self.call(
@@ -122,7 +122,7 @@ class EvaluationTests(unittest.TestCase):
             "/v1/evaluate",
             {
                 "flag_key": "checkout-v2",
-                "context": {"key": "alice", "attributes": {}},
+                "context": {"subject": "alice", "attributes": {}},
                 "default": False,
             },
             token=secret,
@@ -138,7 +138,7 @@ class EvaluationTests(unittest.TestCase):
             "/v1/evaluate",
             {
                 "flag_key": "checkout-v2",
-                "context": {"key": "alice", "attributes": {}},
+                "context": {"subject": "alice", "attributes": {}},
                 "default": False,
             },
         )
@@ -160,7 +160,7 @@ class EvaluationTests(unittest.TestCase):
         )
         revoked_status, revoked = self.call(
             "DELETE",
-            "/v1/projects/shop/environments/prod/sdk-keys/" + str(created["id"]),
+            "/v1/projects/shop/environments/prod/sdk-tokens/" + str(created["id"]),
         )
         after_status, after = self.call(
             "POST",
@@ -168,13 +168,13 @@ class EvaluationTests(unittest.TestCase):
             self.evaluate_body("checkout-v2", "alice", {}),
             token=secret,
         )
-        created_audit = [row for row in self.audit_rows() if row["action"] == "sdk_key.create"]
+        created_audit = [row for row in self.audit_rows() if row["action"] == "sdk_token.create"]
         self.assertEqual(listed_status, "200 OK")
         self.assertEqual(listed["items"][0]["name"], "checkout-api")
         self.assertEqual(listed["items"][0]["prefix"], created["prefix"])
         self.assertNotIn("secret", listed["items"][0])
         self.assertEqual(duplicate_status, "409 Conflict")
-        self.assertEqual(duplicate["error"]["message"], "SDK key name already exists.")
+        self.assertEqual(duplicate["error"]["message"], "SDK token name already exists.")
         self.assertEqual(own_status, "200 OK")
         self.assertEqual(own["reason"], "target_match")
         self.assertEqual(mismatch_status, "403 Forbidden")
@@ -193,7 +193,7 @@ class EvaluationTests(unittest.TestCase):
         self.assertIn(created["prefix"], created_audit[0]["after_json"])
 
     def test_context_over_the_caps_is_rejected(self) -> None:
-        """Too many attributes, an empty key, and a null value are 400."""
+        """Too many attributes, an empty subject, and a null value are 400."""
         self.seed()
         attributes = {}
         index = 0
@@ -205,7 +205,7 @@ class EvaluationTests(unittest.TestCase):
             "/v1/evaluate",
             self.evaluate_body("checkout-v2", "bob", attributes),
         )
-        empty_key_status, _empty_key = self.call(
+        empty_subject_status, _empty_subject = self.call(
             "POST",
             "/v1/evaluate",
             self.evaluate_body("checkout-v2", "", {}),
@@ -216,7 +216,7 @@ class EvaluationTests(unittest.TestCase):
             self.evaluate_body("checkout-v2", "bob", {"country": None}),
         )
         self.assertEqual(too_many_status, "400 Bad Request")
-        self.assertEqual(empty_key_status, "400 Bad Request")
+        self.assertEqual(empty_subject_status, "400 Bad Request")
         self.assertEqual(null_status, "400 Bad Request")
         self.assertEqual(null_body["error"]["code"], "validation_error")
 
@@ -283,7 +283,7 @@ class EvaluationTests(unittest.TestCase):
             {
                 "project_key": "shop",
                 "environment_key": "prod",
-                "context": {"key": "bob", "attributes": {}},
+                "context": {"subject": "bob", "attributes": {}},
             },
         )
         self.add_flag("alpha")
@@ -293,7 +293,7 @@ class EvaluationTests(unittest.TestCase):
             {
                 "project_key": "shop",
                 "environment_key": "prod",
-                "context": {"key": "bob", "attributes": {}},
+                "context": {"subject": "bob", "attributes": {}},
             },
         )
         self.assertEqual(before_status, "200 OK")
@@ -375,7 +375,7 @@ class EvaluationTests(unittest.TestCase):
         self.assertEqual(status, "200 OK")
         return body
 
-    def evaluate(self, flag_key: str, context_key: str, attributes: dict) -> dict:
+    def evaluate(self, flag_key: str, subject: str, attributes: dict) -> dict:
         """Evaluate one flag with the management token and return the decision.
 
         Raises AssertionError when the status is not 200.
@@ -383,7 +383,7 @@ class EvaluationTests(unittest.TestCase):
         status, body = self.call(
             "POST",
             "/v1/evaluate",
-            self.evaluate_body(flag_key, context_key, attributes),
+            self.evaluate_body(flag_key, subject, attributes),
         )
         self.assertEqual(status, "200 OK")
         return body
@@ -391,7 +391,7 @@ class EvaluationTests(unittest.TestCase):
     def evaluate_body(
         self,
         flag_key: str,
-        context_key: str,
+        subject: str,
         attributes: dict,
         default: object = False,
         environment_key: str = "prod",
@@ -404,7 +404,7 @@ class EvaluationTests(unittest.TestCase):
             "project_key": "shop",
             "environment_key": environment_key,
             "flag_key": flag_key,
-            "context": {"key": context_key, "attributes": attributes},
+            "context": {"subject": subject, "attributes": attributes},
             "default": default,
         }
 

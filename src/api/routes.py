@@ -11,7 +11,14 @@ from api.flags import create_flag, get_flag, list_flags, patch_flag
 from api.health import get_health
 from api.projects import create_project, get_project, list_projects
 from api.request import Request, Response
-from api.sdk_keys import create_sdk_key, list_sdk_keys, revoke_sdk_key
+from api.sdk_tokens import create_sdk_token, list_sdk_tokens, revoke_sdk_token
+from api.segments import (
+    create_segment,
+    delete_segment,
+    get_segment,
+    list_segments,
+    replace_segment,
+)
 from api.targeting import get_targeting, replace_targeting
 from domain.errors import Forbidden, StorageError
 from domain.models.principal import KIND_MANAGEMENT, KIND_SDK, Principal
@@ -57,9 +64,9 @@ def authorize(request: Request, principal: Principal) -> None:
     """Raise Forbidden when principal may not reach this path.
 
     A management token may continue, and the dispatcher then returns 404
-    for a path that has no controller yet. An SDK key may continue only
+    for a path that has no controller yet. An SDK token may continue only
     for evaluate, evaluate-all, and evaluation-config. Does not compare
-    the SDK key's environment with the request; that check belongs to the
+    the SDK token's environment with the request; that check belongs to the
     evaluation service. Does not commit.
     """
     if principal.kind == KIND_MANAGEMENT:
@@ -92,7 +99,7 @@ def _evaluate(
 
 
 def _sdk_may_read(request: Request) -> bool:
-    """Return True when an SDK key is allowed to reach this path.
+    """Return True when an SDK token is allowed to reach this path.
 
     The environment match is not checked here. Does not read the database.
     """
@@ -143,8 +150,10 @@ def _management_route(
         return _flags_collection(request, session[0], session[1], evaluation_cache, project_key)
     if len(parts) == 6 and parts[4] == "flags":
         return _one_flag(request, session[0], session[1], evaluation_cache, project_key, parts[5])
-    if len(parts) == 7 and parts[4] == "environments" and parts[6] == "sdk-keys":
-        return _sdk_keys(request, session[0], session[1], project_key, parts[5])
+    if len(parts) == 7 and parts[4] == "environments" and parts[6] == "segments":
+        return _segments(request, session[0], session[1], project_key, parts[5])
+    if len(parts) == 7 and parts[4] == "environments" and parts[6] == "sdk-tokens":
+        return _sdk_tokens(request, session[0], session[1], project_key, parts[5])
     if len(parts) == 7 and parts[4] == "environments" and parts[6] == "evaluation-config":
         return _evaluation_config(
             request,
@@ -154,8 +163,18 @@ def _management_route(
             project_key,
             parts[5],
         )
-    if len(parts) == 8 and parts[4] == "environments" and parts[6] == "sdk-keys":
-        return _one_sdk_key(request, session[0], session[1], project_key, parts[5], parts[7])
+    if len(parts) == 8 and parts[4] == "environments" and parts[6] == "segments":
+        return _one_segment(
+            request,
+            session[0],
+            session[1],
+            evaluation_cache,
+            project_key,
+            parts[5],
+            parts[7],
+        )
+    if len(parts) == 8 and parts[4] == "environments" and parts[6] == "sdk-tokens":
+        return _one_sdk_token(request, session[0], session[1], project_key, parts[5], parts[7])
     if len(parts) == 8 and parts[4] == "flags" and parts[6] == "environments":
         return _flag_environment(
             request,
@@ -246,39 +265,88 @@ def _one_flag(
     return method_not_allowed("GET or PATCH")
 
 
-def _sdk_keys(
+def _segments(
     request: Request,
     principal: Principal,
     connection: Connection,
     project_key: str,
     environment_key: str,
 ) -> Response:
-    """Handle SDK keys for one environment.
+    """Handle segments for one environment.
 
     GET lists and POST creates. Any other method is 405. Does not commit.
     """
     if request.method == "GET":
-        return list_sdk_keys(principal, connection, project_key, environment_key)
+        return list_segments(principal, connection, request, project_key, environment_key)
     if request.method == "POST":
-        return create_sdk_key(principal, connection, request, project_key, environment_key)
+        return create_segment(principal, connection, request, project_key, environment_key)
     return method_not_allowed("GET or POST")
 
 
-def _one_sdk_key(
+def _one_segment(
+    request: Request,
+    principal: Principal,
+    connection: Connection,
+    evaluation_cache: EvaluationCache | None,
+    project_key: str,
+    environment_key: str,
+    segment_key: str,
+) -> Response:
+    """Handle one segment.
+
+    GET fetches, PUT replaces the name and subjects, and DELETE removes the
+    segment when no target cites it. Any other method is 405. Does not commit.
+    """
+    if request.method == "GET":
+        return get_segment(principal, connection, project_key, environment_key, segment_key)
+    if request.method == "PUT":
+        return replace_segment(
+            principal,
+            connection,
+            _cache(evaluation_cache),
+            request,
+            project_key,
+            environment_key,
+            segment_key,
+        )
+    if request.method == "DELETE":
+        return delete_segment(principal, connection, project_key, environment_key, segment_key)
+    return method_not_allowed("GET, PUT, or DELETE")
+
+
+def _sdk_tokens(
     request: Request,
     principal: Principal,
     connection: Connection,
     project_key: str,
     environment_key: str,
-    key_id: str,
 ) -> Response:
-    """Revoke one SDK key.
+    """Handle SDK tokens for one environment.
+
+    GET lists and POST creates. Any other method is 405. Does not commit.
+    """
+    if request.method == "GET":
+        return list_sdk_tokens(principal, connection, project_key, environment_key)
+    if request.method == "POST":
+        return create_sdk_token(principal, connection, request, project_key, environment_key)
+    return method_not_allowed("GET or POST")
+
+
+def _one_sdk_token(
+    request: Request,
+    principal: Principal,
+    connection: Connection,
+    project_key: str,
+    environment_key: str,
+    token_id: str,
+) -> Response:
+    """Revoke one SDK token.
 
     DELETE is the only method. Does not commit.
     """
     if request.method != "DELETE":
         return method_not_allowed("DELETE")
-    return revoke_sdk_key(principal, connection, project_key, environment_key, key_id)
+    return revoke_sdk_token(principal, connection, project_key, environment_key, token_id)
 
 
 def _evaluation_config(

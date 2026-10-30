@@ -10,10 +10,10 @@ The process exposes two groups of endpoints.
 
 | Plane | Callers | Allowed work |
 | --- | --- | --- |
-| Management | Operators holding a management token | Create and edit projects, environments, flags, variations, and per-environment targeting. Read the audit log. |
-| Evaluation | SDKs and backends holding an environment SDK key | Resolve a context to variation values for that environment. Read the configuration of that environment. |
+| Management | Operators holding a management token | Create and edit projects, environments, flags, variations, segments, and per-environment targeting. Read the audit log. |
+| Evaluation | SDKs and backends holding an environment SDK token | Resolve a context to variation values for that environment. Read the configuration of that environment. |
 
-A management token may also evaluate, so an operator can debug a flag. An SDK key cannot mutate.
+A management token may also evaluate, so an operator can debug a flag. An SDK token cannot mutate.
 
 ## Layers
 
@@ -99,7 +99,7 @@ evaluate(flag_key, definitions, context) → decision
 
 `definitions` holds every flag in the environment. Each one is that flag's variation list plus its targeting. Prerequisites call the same function on another key in that map. `context` is the caller's key and attributes. `decision` is the variation value, its index, a reason code, the rule id when a rule matched, and the config version. A key that is not in `definitions` returns the caller-supplied default with reason `flag_not_found`.
 
-The function is deterministic. The same inputs produce the same decision. Time is not an input. Randomness is not an input. Percentage rollouts hash a stable salt with the context key, as specified in [Domain](domain.md).
+The function is deterministic. The same inputs produce the same decision. Time is not an input. Randomness is not an input. Percentage rollouts hash a stable salt with the subject, as specified in [Domain](domain.md).
 
 Services may call the evaluator many times in one request (bulk evaluate, prerequisites). They may not reimplement matching in the repository.
 

@@ -289,6 +289,24 @@ def insert_disabled_config(
     )
 
 
+def list_environment_targets(connection: Connection, environment_id: int) -> list[object]:
+    """Return each flag's parsed targets document in one environment.
+
+    An environment with no configs returns an empty list. Raises
+    StorageError when a JSON column is not valid JSON. Does not commit.
+    The caller decides whether a segment key is cited.
+    """
+    rows = connection.execute(
+        """
+        SELECT targets_json
+          FROM flag_configs
+         WHERE environment_id = ?
+        """,
+        (environment_id,),
+    ).fetchall()
+    return [load_json_text(row["targets_json"]) for row in rows]
+
+
 def _config_row(row: Mapping[str, object]) -> FlagConfigRow:
     """Map one joined config row into a FlagConfigRow.
 

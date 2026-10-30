@@ -1,4 +1,4 @@
-"""Issue, list, and revoke SDK keys for one environment.
+"""Issue, list, and revoke SDK tokens for one environment.
 
 The plaintext secret is returned once. The audit row stores the id, the
 name, and the prefix, never the secret.
@@ -14,12 +14,12 @@ from domain.services.access import require_management
 from domain.services.audit import record_change
 from domain.validation import is_public_key, require_display_name
 from repositories.credentials import (
-    SdkKeyRow,
-    find_active_sdk_key_by_name,
+    SdkTokenRow,
+    find_active_sdk_token_by_name,
     insert_credential,
-    list_sdk_keys,
+    list_sdk_tokens,
     prefix_of,
-    revoke_sdk_key,
+    revoke_sdk_token,
 )
 from repositories.db import Connection
 from repositories.environments import EnvironmentRow, find_environment
@@ -28,7 +28,7 @@ from repositories.projects import ProjectRow, find_project
 _TOKEN_BYTES = 32
 
 
-class IssuedSdkKey:
+class IssuedSdkToken:
     """The one response that contains an SDK secret.
 
     secret is the plaintext token. name is the operator label. prefix is
@@ -52,18 +52,18 @@ class IssuedSdkKey:
         self.created_at = created_at
 
 
-def issue_sdk_key(
+def issue_sdk_token(
     connection: Connection,
     principal: Principal,
     project_key: str,
     environment_key: str,
     name: str,
-) -> IssuedSdkKey:
-    """Create an SDK key for one environment and return the secret once.
+) -> IssuedSdkToken:
+    """Create an SDK token for one environment and return the secret once.
 
     name is the operator label shown in the list. Raises Forbidden for an
-    SDK key, NotFound when the project or the environment is absent,
-    ValidationError for a bad name, and Conflict when an active key already
+    SDK token, NotFound when the project or the environment is absent,
+    ValidationError for a bad name, and Conflict when an active token already
     has that name in the environment. The audit document has the id, the
     name, and the prefix, not the secret. Does not print the secret.
     """
@@ -71,8 +71,8 @@ def issue_sdk_key(
     label = require_display_name(name, "name")
     with connection.transaction():
         project, environment = _require_scope(connection, project_key, environment_key)
-        if find_active_sdk_key_by_name(connection, environment.id, label) is not None:
-            raise Conflict("SDK key name already exists.")
+        if find_active_sdk_token_by_name(connection, environment.id, label) is not None:
+            raise Conflict("SDK token name already exists.")
         created_at = utc_timestamp()
         secret = secrets.token_urlsafe(_TOKEN_BYTES)
         credential_id = insert_credential(
@@ -83,7 +83,7 @@ def issue_sdk_key(
             created_at=created_at,
             name=label,
         )
-        issued = IssuedSdkKey(
+        issued = IssuedSdkToken(
             credential_id,
             label,
             prefix_of(secret),
@@ -93,7 +93,7 @@ def issue_sdk_key(
         record_change(
             connection,
             principal,
-            "sdk_key.create",
+            "sdk_token.create",
             project.key,
             environment.key,
             None,
@@ -103,40 +103,40 @@ def issue_sdk_key(
     return issued
 
 
-def list_sdk_key_page(
+def list_sdk_token_page(
     connection: Connection,
     principal: Principal,
     project_key: str,
     environment_key: str,
-) -> list[SdkKeyRow]:
-    """Return the active SDK keys for one environment.
+) -> list[SdkTokenRow]:
+    """Return the active SDK tokens for one environment.
 
-    Raises Forbidden for an SDK key, and NotFound when the project or the
-    environment is absent. An environment with no keys returns an empty
+    Raises Forbidden for an SDK token, and NotFound when the project or the
+    environment is absent. An environment with no tokens returns an empty
     list. Secrets are not loaded. Does not open a transaction.
     """
     require_management(principal)
     _project, environment = _require_scope(connection, project_key, environment_key)
-    return list_sdk_keys(connection, environment.id)
+    return list_sdk_tokens(connection, environment.id)
 
 
-def revoke_sdk_key_now(
+def revoke_sdk_token_now(
     connection: Connection,
     principal: Principal,
     project_key: str,
     environment_key: str,
     credential_id: int,
 ) -> None:
-    """Revoke one SDK key so the next evaluation with it is rejected.
+    """Revoke one SDK token so the next evaluation with it is rejected.
 
-    Raises Forbidden for an SDK key. Raises NotFound when the project, the
-    environment, or the key is absent, including when the key is already
+    Raises Forbidden for an SDK token. Raises NotFound when the project, the
+    environment, or the token is absent, including when the token is already
     revoked. The audit document does not contain a secret.
     """
     require_management(principal)
     with connection.transaction():
         project, environment = _require_scope(connection, project_key, environment_key)
-        rows = list_sdk_keys(connection, environment.id)
+        rows = list_sdk_tokens(connection, environment.id)
         name = ""
         prefix = ""
         found = False
@@ -146,14 +146,14 @@ def revoke_sdk_key_now(
                 prefix = row.prefix
                 found = True
         if not found:
-            raise NotFound("SDK key does not exist.")
-        changed = revoke_sdk_key(connection, credential_id, environment.id, utc_timestamp())
+            raise NotFound("SDK token does not exist.")
+        changed = revoke_sdk_token(connection, credential_id, environment.id, utc_timestamp())
         if changed == 0:
-            raise NotFound("SDK key does not exist.")
+            raise NotFound("SDK token does not exist.")
         record_change(
             connection,
             principal,
-            "sdk_key.revoke",
+            "sdk_token.revoke",
             project.key,
             environment.key,
             None,
@@ -186,7 +186,7 @@ def _require_scope(
 
 
 def _audit_document(credential_id: int, name: str, prefix: str) -> str:
-    """Return the audit JSON for an SDK key.
+    """Return the audit JSON for an SDK token.
 
     The document has the id, the name, and the prefix. It does not have
     the secret or the hash.

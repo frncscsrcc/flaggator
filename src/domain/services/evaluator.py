@@ -21,6 +21,7 @@ from domain.models.evaluation import (
     Decision,
     FlagDefinition,
     Rollout,
+    TargetGroup,
     Rule,
     VariationServe,
 )
@@ -172,32 +173,49 @@ def _served(
 
 
 def _targeted_index(definition: FlagDefinition, context: Context) -> int | None:
-    """Return the variation a context key is pinned to.
+    """Return the variation a subject is pinned to.
 
-    None means the context has no key, or the key is not pinned. The first
-    matching list wins if a key was stored twice. Does not read the database.
+    A variation matches when the subject is in its subject list or in a
+    segment it cites. The first matching variation in stored order wins.
+    None means the context has no subject, or the subject is not pinned.
+    A cited segment that is absent from the map matches nobody. Does not
+    read the database.
     """
-    if not _has_context_key(context):
+    if not _has_subject(context):
         return None
-    for variation_index, context_keys in definition.targets:
-        for context_key in context_keys:
-            if context_key == context.key:
-                return variation_index
+    for group in definition.targets:
+        if _group_matches(definition, group, context.subject):
+            return group.variation_index
     return None
+
+
+def _group_matches(definition: FlagDefinition, group: TargetGroup, subject: str | None) -> bool:
+    """Return True when subject is pinned by this target group.
+
+    subject is the non-empty subject the caller already checked. A missing
+    segment key is not a match. Does not read the database.
+    """
+    if subject in group.subjects:
+        return True
+    for segment_key in group.segments:
+        members = definition.segments.get(segment_key)
+        if members is not None and subject in members:
+            return True
+    return False
 
 
 def _rule_index(flag_key: str, rule: Rule, context: Context) -> int | None:
     """Return the variation this rule serves, or None when it does not match.
 
-    A rollout with no context key does not match. Does not read the database.
+    A rollout with no subject does not match. Does not read the database.
     """
     if not _rule_matches(rule, context):
         return None
     if isinstance(rule.serve, VariationServe):
         return rule.serve.variation_index
-    if not _has_context_key(context):
+    if not _has_subject(context):
         return None
-    return _rollout_index(flag_key, rule.serve, context.key)
+    return _rollout_index(flag_key, rule.serve, context.subject)
 
 
 def _rule_matches(rule: Rule, context: Context) -> bool:
@@ -214,15 +232,15 @@ def _rule_matches(rule: Rule, context: Context) -> bool:
 def _fallthrough(definition: FlagDefinition, context: Context) -> Decision:
     """Return the fallthrough decision.
 
-    A rollout with no context key serves the off variation, still with
+    A rollout with no subject serves the off variation, still with
     reason fallthrough. Does not read the database.
     """
     serve = definition.fallthrough
     if isinstance(serve, VariationServe):
         return _served(definition, serve.variation_index, REASON_FALLTHROUGH, None)
-    if not _has_context_key(context):
+    if not _has_subject(context):
         return _served(definition, definition.off_variation, REASON_FALLTHROUGH, None)
-    index = _rollout_index(definition.key, serve, context.key)
+    index = _rollout_index(definition.key, serve, context.subject)
     if index is None:
         return _served(definition, definition.off_variation, REASON_FALLTHROUGH, None)
     return _served(definition, index, REASON_FALLTHROUGH, None)
@@ -386,23 +404,23 @@ def _is_array(value: object) -> bool:
     return isinstance(value, (list, tuple))
 
 
-def _has_context_key(context: Context) -> bool:
-    """Return True when context.key can be targeted or bucketed.
+def _has_subject(context: Context) -> bool:
+    """Return True when context.subject can be targeted or bucketed.
 
-    None and an empty string are not keys. Does not read the database.
+    None and an empty string are not subjects. Does not read the database.
     """
-    return isinstance(context.key, str) and context.key != ""
+    return isinstance(context.subject, str) and context.subject != ""
 
 
-def _rollout_index(flag_key: str, rollout: Rollout, context_key: str | None) -> int | None:
+def _rollout_index(flag_key: str, rollout: Rollout, subject: str | None) -> int | None:
     """Return the variation the bucket lands on.
 
-    None means the weights do not cover the bucket. context_key is the
-    non-empty key the caller already checked. Does not read the database.
+    None means the weights do not cover the bucket. subject is the
+    non-empty subject the caller already checked. Does not read the database.
     """
-    if context_key is None:
+    if subject is None:
         return None
-    bucket = _bucket(flag_key, rollout.salt, context_key)
+    bucket = _bucket(flag_key, rollout.salt, subject)
     covered = 0
     for share in rollout.shares:
         covered = covered + share.weight
@@ -411,13 +429,13 @@ def _rollout_index(flag_key: str, rollout: Rollout, context_key: str | None) -> 
     return None
 
 
-def _bucket(flag_key: str, salt: str, context_key: str) -> int:
-    """Return the bucket in 0..99999 for this flag, salt, and context key.
+def _bucket(flag_key: str, salt: str, subject: str) -> int:
+    """Return the bucket in 0..99999 for this flag, salt, and subject.
 
-    The material is flag_key, salt, and context_key joined by colons, then
+    The material is flag_key, salt, and subject joined by colons, then
     UTF-8 encoded. The bucket is the first four SHA-256 bytes as an
     unsigned big-endian integer, modulo 100000. Does not read the database.
     """
-    material = flag_key + ":" + salt + ":" + context_key
+    material = flag_key + ":" + salt + ":" + subject
     digest = hashlib.sha256(material.encode("utf-8")).digest()
     return int.from_bytes(digest[0:4], "big") % 100000

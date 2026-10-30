@@ -26,7 +26,7 @@ def create_environment(
 ) -> Environment:
     """Insert an environment, disabled flag configs, and one audit row.
 
-    Raises Forbidden for an SDK key, NotFound when the project is absent,
+    Raises Forbidden for an SDK token, NotFound when the project is absent,
     ValidationError for a bad key or name, and Conflict when this project
     already has the environment key. Configs are disabled with off variation
     0 and fallthrough variation 0. The audit document does not contain a
@@ -68,7 +68,7 @@ def list_environments_page(
 ) -> EnvironmentPage:
     """Return one page of environments in project_key.
 
-    Raises Forbidden for an SDK key, NotFound when the project is absent,
+    Raises Forbidden for an SDK token, NotFound when the project is absent,
     and ValidationError for a bad limit or cursor key. The existence check
     and the page share one transaction. next_key is None when no further
     page exists.

@@ -23,7 +23,7 @@ def create_project(
 ) -> Project:
     """Insert a project and an audit row, then return the stored project.
 
-    Raises Forbidden for an SDK key, ValidationError for a bad key or name,
+    Raises Forbidden for an SDK token, ValidationError for a bad key or name,
     and Conflict when the key already exists. The audit document is the key
     and the name. It does not contain a credential secret.
     """
@@ -51,7 +51,7 @@ def create_project(
 def get_project(connection: Connection, principal: Principal, project_key: str) -> Project:
     """Return the project named by project_key.
 
-    Raises Forbidden for an SDK key. Raises NotFound when the key is not a
+    Raises Forbidden for an SDK token. Raises NotFound when the key is not a
     public key or no row matches, with the same message for both. Does not
     open a transaction.
     """
@@ -71,7 +71,7 @@ def list_projects_page(
 ) -> ProjectPage:
     """Return one page of projects ordered by key.
 
-    Raises Forbidden for an SDK key and ValidationError for a bad limit or
+    Raises Forbidden for an SDK token and ValidationError for a bad limit or
     cursor key. Reads one extra row to decide next_key. next_key is None
     when no further page exists. Does not open a transaction.
     """

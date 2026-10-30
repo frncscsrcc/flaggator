@@ -1,6 +1,6 @@
 """Authorization shared by management use cases.
 
-The adapter already refuses an SDK key on a management path. The service
+The adapter already refuses an SDK token on a management path. The service
 repeats the check so the rule is visible on the use case and does not depend
 on HTTP.
 """

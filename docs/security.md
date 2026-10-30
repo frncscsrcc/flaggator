@@ -17,9 +17,9 @@ These assumptions are local-deploy assumptions. They are not a reason to skip ha
 | Asset | Why it matters |
 | --- | --- |
 | Targeting configuration | Turning a flag on or rewriting a rule changes application behavior. |
-| Evaluation results | They reveal which variation a context receives. Combined with a guessed context key they can disclose a rollout assignment. |
-| Salts and full rule trees | They let a holder recompute buckets for every context key. Served only to credentials of that environment. |
-| Credential secrets | A management token edits every project. An SDK key reads and evaluates one environment. |
+| Evaluation results | They reveal which variation a context receives. Combined with a guessed subject they can disclose a rollout assignment. |
+| Salts and full rule trees | They let a holder recompute buckets for every subject. Served only to credentials of that environment. |
+| Credential secrets | A management token edits every project. An SDK token reads and evaluates one environment. |
 | Audit log | The record of who changed targeting. |
 | Context attributes | Callers may send identifiers and personal data. The server needs them to evaluate and does not need to store them. |
 
@@ -30,7 +30,7 @@ Two kinds ([P8](decisions.md)):
 | Kind | Bound to | May do |
 | --- | --- | --- |
 | Management token | The whole server in v1 | Management routes, audit reads, and evaluation |
-| SDK key | One environment | Evaluate and read evaluation config for that environment only |
+| SDK token | One environment | Evaluate and read evaluation config for that environment only |
 
 Issuance:
 
@@ -53,8 +53,8 @@ Opaque tokens are the v1 credential ([P13](decisions.md)). A later authenticatio
 
 Authentication attaches a principal before the controller runs. The service then enforces:
 
-- SDK key on a management route → `Forbidden`
-- SDK key whose environment is not the target of the read or evaluation → `Forbidden`
+- SDK token on a management route → `Forbidden`
+- SDK token whose environment is not the target of the read or evaluation → `Forbidden`
 - Management token on a management route → allowed in v1
 - Revoked or missing credential → `Unauthenticated`, which the API renders as 401
 
@@ -74,7 +74,7 @@ Regular expressions are not a v1 operator. If they are added later, patterns nee
 
 ## Context data
 
-Evaluation reads the context and discards it when the request ends. The service does not write context keys or attributes to the database as part of evaluation.
+Evaluation reads the context and discards it when the request ends. The service does not write subjects or attributes to the database as part of evaluation.
 
 Audit records store flag configuration before and after a management write. They do not store evaluation contexts.
 
@@ -100,7 +100,9 @@ Evaluation walks prerequisites with a visited set and a depth cap, specified in 
 | Attribute name length | 64 |
 | String attribute length | 1024 |
 | Prerequisite depth | 10 |
-| Targets per configuration (total keys) | 1000 |
+| Targets per configuration (total subjects) | 1000 |
+| Subjects per segment | 1000 |
+| Segments cited by one variation | 20 |
 | Audit `limit` | 200 |
 | List `limit` | 200 |
 
@@ -109,7 +111,7 @@ Exceeding a limit is `ValidationError` (400), not a truncated write.
 ## Errors and information leakage
 
 - 401 is the same message for a missing token, an unknown token, and a revoked token.
-- 404 is for management reads of missing projects, environments, and flags.
+- 404 is for management reads of missing projects, environments, flags, and segments.
 - Evaluation of a missing flag returns the caller-supplied default with reason `flag_not_found` ([Domain](domain.md)). It does not echo other flags.
 - 500 messages do not include exception text from the database driver.
 - Stack traces stay on the server's stderr, not in the JSON body.

@@ -20,7 +20,8 @@ tags:
   - name: Environments
   - name: Flags
   - name: Targeting
-  - name: SDK keys
+  - name: Segments
+  - name: SDK tokens
   - name: Evaluation
 paths:
   /health:
@@ -392,22 +393,25 @@ paths:
                   details: []
         "500":
           $ref: "#/components/responses/StorageError"
-  /v1/projects/{projectKey}/environments/{environmentKey}/sdk-keys:
+  /v1/projects/{projectKey}/environments/{environmentKey}/segments:
     get:
-      tags: [SDK keys]
-      summary: List SDK keys
-      operationId: listSdkKeys
-      description: Active keys only. Secrets are absent.
+      tags: [Segments]
+      summary: List segments
+      operationId: listSegments
       parameters:
         - $ref: "#/components/parameters/ProjectKey"
         - $ref: "#/components/parameters/EnvironmentKey"
+        - $ref: "#/components/parameters/Limit"
+        - $ref: "#/components/parameters/Cursor"
       responses:
         "200":
-          description: The active SDK keys. An environment with none returns an empty items list.
+          description: One page of segments in the environment, ordered by key.
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/SdkKeyPage"
+                $ref: "#/components/schemas/SegmentPage"
+        "400":
+          $ref: "#/components/responses/ValidationError"
         "401":
           $ref: "#/components/responses/Unauthenticated"
         "403":
@@ -419,13 +423,9 @@ paths:
         "500":
           $ref: "#/components/responses/StorageError"
     post:
-      tags: [SDK keys]
-      summary: Create an SDK key
-      operationId: createSdkKey
-      description: |
-        name is a non-secret label for the operator. The secret is returned
-        once and is not written to the audit log. An active key in this
-        environment with the same name is 409.
+      tags: [Segments]
+      summary: Create a segment
+      operationId: createSegment
       parameters:
         - $ref: "#/components/parameters/ProjectKey"
         - $ref: "#/components/parameters/EnvironmentKey"
@@ -434,14 +434,14 @@ paths:
         content:
           application/json:
             schema:
-              $ref: "#/components/schemas/SdkKeyCreate"
+              $ref: "#/components/schemas/SegmentCreate"
       responses:
         "201":
-          description: The new key. secret will not be returned again.
+          description: The stored segment.
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/IssuedSdkKey"
+                $ref: "#/components/schemas/Segment"
         "400":
           $ref: "#/components/responses/ValidationError"
         "401":
@@ -453,7 +453,7 @@ paths:
         "405":
           $ref: "#/components/responses/MethodNotAllowed"
         "409":
-          description: An active SDK key in this environment already has this name.
+          description: An active segment with this key already exists in the environment.
           content:
             application/json:
               schema:
@@ -461,23 +461,189 @@ paths:
               example:
                 error:
                   code: conflict
-                  message: SDK key name already exists.
+                  message: Segment key already exists.
                   details: []
         "500":
           $ref: "#/components/responses/StorageError"
-  /v1/projects/{projectKey}/environments/{environmentKey}/sdk-keys/{keyId}:
+  /v1/projects/{projectKey}/environments/{environmentKey}/segments/{segmentKey}:
+    get:
+      tags: [Segments]
+      summary: Fetch one segment
+      operationId: getSegment
+      parameters:
+        - $ref: "#/components/parameters/ProjectKey"
+        - $ref: "#/components/parameters/EnvironmentKey"
+        - $ref: "#/components/parameters/SegmentKey"
+      responses:
+        "200":
+          description: The stored segment.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Segment"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "405":
+          $ref: "#/components/responses/MethodNotAllowed"
+        "500":
+          $ref: "#/components/responses/StorageError"
+    put:
+      tags: [Segments]
+      summary: Replace a segment
+      operationId: replaceSegment
+      description: Replaces name and subjects. The key in the path does not change. The environment evaluation bundle is dropped after commit.
+      parameters:
+        - $ref: "#/components/parameters/ProjectKey"
+        - $ref: "#/components/parameters/EnvironmentKey"
+        - $ref: "#/components/parameters/SegmentKey"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SegmentReplace"
+      responses:
+        "200":
+          description: The stored segment.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Segment"
+        "400":
+          $ref: "#/components/responses/ValidationError"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "405":
+          $ref: "#/components/responses/MethodNotAllowed"
+        "500":
+          $ref: "#/components/responses/StorageError"
     delete:
-      tags: [SDK keys]
-      summary: Revoke an SDK key
-      operationId: revokeSdkKey
+      tags: [Segments]
+      summary: Delete a segment
+      operationId: deleteSegment
+      description: Refused when a target in this environment cites the key.
+      parameters:
+        - $ref: "#/components/parameters/ProjectKey"
+        - $ref: "#/components/parameters/EnvironmentKey"
+        - $ref: "#/components/parameters/SegmentKey"
+      responses:
+        "204":
+          description: The segment is deleted. The body is an empty object.
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "405":
+          $ref: "#/components/responses/MethodNotAllowed"
+        "409":
+          description: A target in this environment still cites the segment.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+              example:
+                error:
+                  code: conflict
+                  message: Segment is still referenced.
+                  details: []
+        "500":
+          $ref: "#/components/responses/StorageError"
+  /v1/projects/{projectKey}/environments/{environmentKey}/sdk-tokens:
+    get:
+      tags: [SDK tokens]
+      summary: List SDK tokens
+      operationId: listSdkTokens
+      description: Active tokens only. Secrets are absent.
+      parameters:
+        - $ref: "#/components/parameters/ProjectKey"
+        - $ref: "#/components/parameters/EnvironmentKey"
+      responses:
+        "200":
+          description: The active SDK tokens. An environment with none returns an empty items list.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SdkTokenPage"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "405":
+          $ref: "#/components/responses/MethodNotAllowed"
+        "500":
+          $ref: "#/components/responses/StorageError"
+    post:
+      tags: [SDK tokens]
+      summary: Create an SDK token
+      operationId: createSdkToken
+      description: |
+        name is a non-secret label for the operator. The secret is returned
+        once and is not written to the audit log. An active token in this
+        environment with the same name is 409.
+      parameters:
+        - $ref: "#/components/parameters/ProjectKey"
+        - $ref: "#/components/parameters/EnvironmentKey"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SdkTokenCreate"
+      responses:
+        "201":
+          description: The new token. secret will not be returned again.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/IssuedSdkToken"
+        "400":
+          $ref: "#/components/responses/ValidationError"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "405":
+          $ref: "#/components/responses/MethodNotAllowed"
+        "409":
+          description: An active SDK token in this environment already has this name.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+              example:
+                error:
+                  code: conflict
+                  message: SDK token name already exists.
+                  details: []
+        "500":
+          $ref: "#/components/responses/StorageError"
+  /v1/projects/{projectKey}/environments/{environmentKey}/sdk-tokens/{id}:
+    delete:
+      tags: [SDK tokens]
+      summary: Revoke an SDK token
+      operationId: revokeSdkToken
       description: A missing, already revoked, or wrong-environment id is 404. The next evaluation with that secret is 401.
       parameters:
         - $ref: "#/components/parameters/ProjectKey"
         - $ref: "#/components/parameters/EnvironmentKey"
-        - $ref: "#/components/parameters/SdkKeyId"
+        - $ref: "#/components/parameters/SdkTokenId"
       responses:
         "204":
-          description: The key is revoked. The body is an empty object.
+          description: The token is revoked. The body is an empty object.
           content:
             application/json:
               schema:
@@ -499,7 +665,7 @@ paths:
       operationId: readEvaluationConfig
       description: |
         Variation lists and targeting, including salts. Secrets are absent.
-        An SDK key may read only its own environment. This document is the
+        An SDK token may read only its own environment. This document is the
         evaluation cache payload.
       parameters:
         - $ref: "#/components/parameters/ProjectKey"
@@ -528,8 +694,8 @@ paths:
       operationId: evaluateOne
       description: |
         A management token must send project_key and environment_key. An SDK
-        key may omit them and uses its bound environment. A sent key that
-        does not match the SDK key is 403. An unknown flag is still 200,
+        token may omit them and uses its bound environment. A sent project or
+        environment that does not match the SDK token is 403. An unknown flag is still 200,
         with the caller default and reason flag_not_found.
       requestBody:
         required: true
@@ -590,7 +756,7 @@ components:
     bearerAuth:
       type: http
       scheme: bearer
-      description: Opaque management token or SDK key. A JWT is not accepted. An SDK key receives 403 on management routes.
+      description: Opaque management token or SDK token. A JWT is not accepted. An SDK token receives 403 on management routes.
   parameters:
     ProjectKey:
       name: projectKey
@@ -610,8 +776,14 @@ components:
       required: true
       schema:
         $ref: "#/components/schemas/PublicKey"
-    SdkKeyId:
-      name: keyId
+    SegmentKey:
+      name: segmentKey
+      in: path
+      required: true
+      schema:
+        $ref: "#/components/schemas/PublicKey"
+    SdkTokenId:
+      name: id
       in: path
       required: true
       description: Decimal credential id, with no leading zero.
@@ -815,6 +987,63 @@ components:
           $ref: "#/components/schemas/PublicKey"
         name:
           $ref: "#/components/schemas/DisplayName"
+    Segment:
+      type: object
+      required: [key, name, subjects]
+      additionalProperties: false
+      properties:
+        key:
+          $ref: "#/components/schemas/PublicKey"
+        name:
+          $ref: "#/components/schemas/DisplayName"
+        subjects:
+          type: array
+          maxItems: 1000
+          items:
+            type: string
+            minLength: 1
+            maxLength: 1024
+    SegmentCreate:
+      type: object
+      required: [key, name, subjects]
+      additionalProperties: false
+      properties:
+        key:
+          $ref: "#/components/schemas/PublicKey"
+        name:
+          $ref: "#/components/schemas/DisplayName"
+        subjects:
+          type: array
+          maxItems: 1000
+          items:
+            type: string
+            minLength: 1
+            maxLength: 1024
+    SegmentReplace:
+      type: object
+      required: [name, subjects]
+      additionalProperties: false
+      properties:
+        name:
+          $ref: "#/components/schemas/DisplayName"
+        subjects:
+          type: array
+          maxItems: 1000
+          items:
+            type: string
+            minLength: 1
+            maxLength: 1024
+    SegmentPage:
+      type: object
+      required: [items, next_cursor]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/Segment"
+        next_cursor:
+          type: string
+          nullable: true
     VariationValue:
       description: A JSON boolean, number, string, array, or object. Null is not allowed anywhere in the value. The encoded value is at most 16 KiB.
       oneOf:
@@ -912,6 +1141,36 @@ components:
         variation_index:
           type: integer
           minimum: 0
+    TargetPin:
+      type: object
+      required: [subjects, segments]
+      additionalProperties: false
+      properties:
+        subjects:
+          type: array
+          items:
+            type: string
+            minLength: 1
+            maxLength: 1024
+        segments:
+          type: array
+          maxItems: 20
+          items:
+            $ref: "#/components/schemas/PublicKey"
+    TargetValue:
+      description: A list of subjects, or subjects plus segment keys for one variation index.
+      oneOf:
+        - type: array
+          items:
+            type: string
+            minLength: 1
+            maxLength: 1024
+        - $ref: "#/components/schemas/TargetPin"
+    Targets:
+      type: object
+      additionalProperties:
+        $ref: "#/components/schemas/TargetValue"
+      description: Names are variation indexes as decimal strings, with no leading zero. Inline lists do not share a subject. At most 1000 inline subjects. A variation cites at most 20 segments, and a segment key is not shared across variations.
     Targeting:
       type: object
       required:
@@ -937,12 +1196,7 @@ components:
           items:
             $ref: "#/components/schemas/Rule"
         targets:
-          type: object
-          additionalProperties:
-            type: array
-            items:
-              type: string
-          description: Keys are variation indexes as decimal strings, with no leading zero. The lists do not share a context key. At most 1000 keys in total.
+          $ref: "#/components/schemas/Targets"
         prerequisites:
           type: array
           items:
@@ -978,12 +1232,7 @@ components:
           items:
             $ref: "#/components/schemas/Rule"
         targets:
-          type: object
-          additionalProperties:
-            type: array
-            items:
-              type: string
-          description: Keys are variation indexes as decimal strings, with no leading zero. The lists do not share a context key. At most 1000 keys in total.
+          $ref: "#/components/schemas/Targets"
         prerequisites:
           type: array
           items:
@@ -1091,14 +1340,14 @@ components:
     EmptyObject:
       type: object
       additionalProperties: false
-    SdkKeyCreate:
+    SdkTokenCreate:
       type: object
       required: [name]
       additionalProperties: false
       properties:
         name:
           $ref: "#/components/schemas/DisplayName"
-    SdkKeyPage:
+    SdkTokenPage:
       type: object
       required: [items]
       additionalProperties: false
@@ -1106,8 +1355,8 @@ components:
         items:
           type: array
           items:
-            $ref: "#/components/schemas/SdkKey"
-    SdkKey:
+            $ref: "#/components/schemas/SdkToken"
+    SdkToken:
       type: object
       required: [id, name, prefix, created_at]
       additionalProperties: false
@@ -1124,9 +1373,9 @@ components:
           description: First eight characters of the secret. Not enough to reconstruct it.
         created_at:
           type: string
-    IssuedSdkKey:
+    IssuedSdkToken:
       allOf:
-        - $ref: "#/components/schemas/SdkKey"
+        - $ref: "#/components/schemas/SdkToken"
         - type: object
           required: [secret]
           properties:
@@ -1135,7 +1384,7 @@ components:
               description: Returned once. Not stored in the audit log.
     EvaluationBundle:
       type: object
-      required: [project_key, environment_key, flags]
+      required: [project_key, environment_key, flags, segments]
       additionalProperties: false
       properties:
         project_key:
@@ -1146,6 +1395,15 @@ components:
           type: array
           items:
             $ref: "#/components/schemas/EvaluationFlag"
+        segments:
+          type: object
+          additionalProperties:
+            type: array
+            items:
+              type: string
+              minLength: 1
+              maxLength: 1024
+          description: Segment key to the subjects stored for that segment in this environment.
     EvaluationFlag:
       type: object
       required:
@@ -1178,11 +1436,7 @@ components:
           items:
             $ref: "#/components/schemas/Rule"
         targets:
-          type: object
-          additionalProperties:
-            type: array
-            items:
-              type: string
+          $ref: "#/components/schemas/Targets"
         prerequisites:
           type: array
           items:
@@ -1220,7 +1474,7 @@ components:
       type: object
       additionalProperties: false
       properties:
-        key:
+        subject:
           type: string
           minLength: 1
           maxLength: 1024

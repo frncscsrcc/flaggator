@@ -150,7 +150,7 @@ def _optional_key(body: dict, field: str, details: list[dict[str, str]]) -> str 
 def _context(value: object) -> Context:
     """Return a context from the JSON object.
 
-    key may be omitted. attributes defaults to an empty map. Raises
+    subject may be omitted. attributes defaults to an empty map. Raises
     ValidationError when the shape is wrong. Does not check lengths; the
     service does.
     """
@@ -159,20 +159,20 @@ def _context(value: object) -> Context:
             "The request body has the wrong fields.",
             details=[{"field": "context", "message": "Context must be an object."}],
         )
-    unknown = sorted(set(value) - {"key", "attributes"})
+    unknown = sorted(set(value) - {"subject", "attributes"})
     if unknown:
         raise ValidationError(
             "The request body has the wrong fields.",
             details=[{"field": "context", "message": "This field is not accepted."}],
         )
-    key = None
-    if "key" in value:
-        if not isinstance(value["key"], str):
+    subject = None
+    if "subject" in value:
+        if not isinstance(value["subject"], str):
             raise ValidationError(
                 "The request body has the wrong fields.",
-                details=[{"field": "context.key", "message": "This field must be a string."}],
+                details=[{"field": "context.subject", "message": "This field must be a string."}],
             )
-        key = value["key"]
+        subject = value["subject"]
     attributes: dict[str, object] = {}
     if "attributes" in value:
         raw = value["attributes"]
@@ -182,7 +182,7 @@ def _context(value: object) -> Context:
                 details=[{"field": "context.attributes", "message": "Attributes must be an object."}],
             )
         attributes = raw
-    return Context(key=key, attributes=attributes)
+    return Context(subject=subject, attributes=attributes)
 
 
 def _unknown(body: dict, allowed: set[str]) -> list[dict[str, str]]:

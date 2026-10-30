@@ -16,6 +16,7 @@ from domain.models.evaluation import (
     Rollout,
     RolloutShare,
     Rule,
+    TargetGroup,
     VariationServe,
 )
 from domain.models.principal import KIND_MANAGEMENT, KIND_SDK, Principal
@@ -106,7 +107,7 @@ def read_config(
 ) -> dict:
     """Return the evaluation bundle for one environment.
 
-    The document includes salts and does not include secrets. An SDK key
+    The document includes salts and does not include secrets. An SDK token
     may read only its own environment. A management token may read any
     environment that exists. Does not evaluate.
     """
@@ -170,7 +171,7 @@ def _sdk_scope(
     project_key: str | None,
     environment_key: str | None,
 ) -> EnvironmentScope:
-    """Return the environment bound to this SDK key.
+    """Return the environment bound to this SDK token.
 
     A project or environment key in the request must match that binding.
     A mismatch is Forbidden, including when the other key does not exist,
@@ -191,16 +192,16 @@ def _sdk_scope(
 def _checked_context(context: Context) -> Context:
     """Return context when it is inside the context caps.
 
-    Raises ValidationError when the key, an attribute name, a string, or
+    Raises ValidationError when the subject, an attribute name, a string, or
     the number of attributes is over the cap, or when a value is not a
     scalar or an array of scalars. Does not read the database.
     """
-    if context.key is not None and (
-        context.key == "" or len(context.key) > MAX_CONTEXT_STRING_LENGTH
+    if context.subject is not None and (
+        context.subject == "" or len(context.subject) > MAX_CONTEXT_STRING_LENGTH
     ):
         raise ValidationError(
             "The context is not valid.",
-            details=[{"field": "context.key", "message": "Use a key of 1 to 1024 characters."}],
+            details=[{"field": "context.subject", "message": "Use a subject of 1 to 1024 characters."}],
         )
     if len(context.attributes) > MAX_CONTEXT_ATTRIBUTES:
         raise ValidationError(
@@ -289,18 +290,20 @@ def _definitions(document: dict) -> dict[str, FlagDefinition]:
     flags = document.get("flags")
     if not isinstance(flags, list):
         raise StorageError()
+    segments = _segments(document.get("segments"))
     definitions: dict[str, FlagDefinition] = {}
     for flag in flags:
-        definition = _definition(flag)
+        definition = _definition(flag, segments)
         definitions[definition.key] = definition
     return definitions
 
 
-def _definition(flag: object) -> FlagDefinition:
+def _definition(flag: object, segments: dict[str, tuple[str, ...]]) -> FlagDefinition:
     """Return one flag definition from a bundle item.
 
-    Raises StorageError when flag is not an object with the stored fields.
-    Does not read the database.
+    segments is the environment membership map, shared by every flag in the
+    bundle. Raises StorageError when flag is not an object with the stored
+    fields. Does not read the database.
     """
     if not isinstance(flag, dict):
         raise StorageError()
@@ -326,6 +329,7 @@ def _definition(flag: object) -> FlagDefinition:
         targets=targets,
         prerequisites=prerequisites,
         version=version,
+        segments=segments,
     )
 
 
@@ -359,26 +363,67 @@ def _rules(value: object) -> tuple[Rule, ...]:
     return tuple(rules)
 
 
-def _targets(value: object) -> tuple[tuple[int, tuple[str, ...]], ...]:
-    """Return target lists keyed by variation index.
+def _segments(value: object) -> dict[str, tuple[str, ...]]:
+    """Return the environment's segment membership.
 
-    An empty object returns an empty tuple. Raises StorageError when a key
-    is not a decimal index or a value is not a list of strings. Does not
-    read the database.
+    An empty object returns an empty map. Raises StorageError when a value
+    is not a list of strings. Does not read the database.
     """
     if not isinstance(value, dict):
         raise StorageError()
-    parsed: list[tuple[int, tuple[str, ...]]] = []
-    for key, context_keys in value.items():
-        if not isinstance(context_keys, list) or not _decimal(key):
+    parsed: dict[str, tuple[str, ...]] = {}
+    for key, members in value.items():
+        if not isinstance(key, str):
             raise StorageError()
-        keys: list[str] = []
-        for context_key in context_keys:
-            if not isinstance(context_key, str):
-                raise StorageError()
-            keys.append(context_key)
-        parsed.append((int(key), tuple(keys)))
+        parsed[key] = tuple(_string_list(members))
+    return parsed
+
+
+def _targets(value: object) -> tuple[TargetGroup, ...]:
+    """Return target lists grouped by variation index.
+
+    A list value is subjects only. An object value has subjects and
+    segments. An empty object returns an empty tuple. Raises StorageError
+    when a name is not a decimal variation index or a value is not one of
+    those shapes. Does not read the database.
+    """
+    if not isinstance(value, dict):
+        raise StorageError()
+    parsed: list[TargetGroup] = []
+    for index, item in value.items():
+        if not _decimal(index):
+            raise StorageError()
+        subjects, segments = _target_value(item)
+        parsed.append(TargetGroup(int(index), tuple(subjects), tuple(segments)))
     return tuple(parsed)
+
+
+def _target_value(item: object) -> tuple[list[str], list[str]]:
+    """Return the subjects and segment keys stored for one variation.
+
+    A list is subjects and no segments. Raises StorageError otherwise.
+    Does not read the database.
+    """
+    if isinstance(item, list):
+        return _string_list(item), []
+    if isinstance(item, dict):
+        return _string_list(item.get("subjects")), _string_list(item.get("segments"))
+    raise StorageError()
+
+
+def _string_list(value: object) -> list[str]:
+    """Return value when it is a list of strings.
+
+    Raises StorageError otherwise. Does not read the database.
+    """
+    if not isinstance(value, list):
+        raise StorageError()
+    cleaned: list[str] = []
+    for item in value:
+        if not isinstance(item, str):
+            raise StorageError()
+        cleaned.append(item)
+    return cleaned
 
 
 def _prerequisites(value: object) -> tuple[Prerequisite, ...]:

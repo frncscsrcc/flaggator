@@ -11,6 +11,7 @@ from domain.validation import MAX_CACHED_BUNDLE_BYTES
 from repositories.bundles import BundleFlag, load_bundle_flags
 from repositories.db import Connection
 from repositories.json_text import dump_json_text
+from repositories.segments import SegmentRow, list_environment_segments
 
 
 class EvaluationCache:
@@ -46,7 +47,8 @@ class EvaluationCache:
             if document is not None:
                 return document
         flags = load_bundle_flags(connection, project_id, environment_id)
-        document = _document(project_key, environment_key, flags)
+        segments = list_environment_segments(connection, environment_id)
+        document = _document(project_key, environment_key, flags, segments)
         encoded = dump_json_text(document).encode("utf-8")
         if len(encoded) <= MAX_CACHED_BUNDLE_BYTES:
             self._cache.set(key, encoded, self._ttl_seconds)
@@ -102,10 +104,17 @@ def cache_key(project_key: str, environment_key: str) -> str:
     return "eval:" + project_key + ":" + environment_key
 
 
-def _document(project_key: str, environment_key: str, flags: list[BundleFlag]) -> dict:
+def _document(
+    project_key: str,
+    environment_key: str,
+    flags: list[BundleFlag],
+    segments: list[SegmentRow],
+) -> dict:
     """Return the JSON document evaluation-config and the cache share.
 
-    flags is empty when the project has no flags. Does not read the database.
+    flags is empty when the project has no flags. segments is empty when
+    the environment has no segments. Membership is stored by segment key,
+    not expanded into each flag. Does not read the database.
     """
     items: list[dict] = []
     for flag in flags:
@@ -122,10 +131,14 @@ def _document(project_key: str, environment_key: str, flags: list[BundleFlag]) -
                 "version": flag.version,
             }
         )
+    membership: dict[str, list[str]] = {}
+    for segment in segments:
+        membership[segment.key] = list(segment.subjects)
     return {
         "environment_key": environment_key,
         "flags": items,
         "project_key": project_key,
+        "segments": membership,
     }
 
 
@@ -148,4 +161,22 @@ def _decode(payload: bytes, project_key: str, environment_key: str) -> dict | No
         return None
     if not isinstance(document.get("flags"), list):
         return None
+    if not _segments_document(document.get("segments")):
+        return None
     return document
+
+
+def _segments_document(value: object) -> bool:
+    """Return True when value is a map of segment key to a list of strings.
+
+    A missing or damaged map is a cache miss. Does not read the database.
+    """
+    if not isinstance(value, dict):
+        return False
+    for members in value.values():
+        if not isinstance(members, list):
+            return False
+        for subject in members:
+            if not isinstance(subject, str):
+                return False
+    return True

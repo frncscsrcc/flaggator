@@ -167,11 +167,12 @@ Logical types are what the application means. Each engine's migration renders th
 | `flags` | Flag identity inside a project | `project_id`, `key` unique per project, `name`, `description` |
 | `flag_variations` | Ordered values | `flag_id`, `variation_index` unique per flag, `value_json` |
 | `flag_configs` | One row per flag per environment | `flag_id`, `environment_id`, `enabled`, `off_variation`, `fallthrough_json`, `rules_json`, `targets_json`, `prerequisites_json`, `version` |
-| `api_credentials` | Management tokens and SDK keys | `kind`, `name` (operator label for SDK keys, null for management), `secret_hash`, `prefix`, `environment_id` null for management tokens, `revoked_at` |
+| `segments` | Named subject list inside an environment | `environment_id`, `key` unique per environment, `name`, `subjects_json` |
+| `api_credentials` | Management tokens and SDK tokens | `kind`, `name` (operator label for SDK tokens, null for management), `secret_hash`, `prefix`, `environment_id` null for management tokens, `revoked_at` |
 | `audit_events` | Mutation log | `at`, `actor_kind`, `actor_id`, `action`, `project_key`, `environment_key`, `flag_key`, `before_json`, `after_json` |
 | `schema_migrations` | Applied migration ids | `id` primary key |
 
-`rules_json`, `targets_json`, `fallthrough_json`, and `prerequisites_json` hold the tree specified in [Domain](domain.md) ([P6](decisions.md)). The whole targeting document is loaded and saved together, so v1 does not split rules or targets into child tables. Identity that other tables reference with foreign keys stays in columns: projects, environments, flags, variation indexes, credential ids.
+`rules_json`, `targets_json`, `fallthrough_json`, and `prerequisites_json` hold the tree specified in [Domain](domain.md) ([P6](decisions.md)). The whole targeting document is loaded and saved together, so v1 does not split rules or targets into child tables. `subjects_json` is the same kind of payload: the segment key is the identity, and a write replaces the subject list as a whole. Identity that other tables reference with foreign keys stays in columns: projects, environments, flags, variation indexes, segment keys, credential ids. A target cites a segment by that key inside `targets_json`; it does not use a foreign key.
 
 Foreign keys:
 
@@ -180,6 +181,7 @@ Foreign keys:
 - `flag_variations.flag_id` → `flags.id`
 - `flag_configs.flag_id` → `flags.id`
 - `flag_configs.environment_id` → `environments.id`
+- `segments.environment_id` → `environments.id`
 - `api_credentials.environment_id` → `environments.id` when present
 
 Unique keys:
@@ -189,6 +191,7 @@ Unique keys:
 - `(flags.project_id, flags.key)`
 - `(flag_variations.flag_id, flag_variations.variation_index)`
 - `(flag_configs.flag_id, flag_configs.environment_id)`
+- `(segments.environment_id, segments.key)`
 
 Database integer ids stay inside repositories and services. HTTP responses use public keys, as [API](api.md) requires. A repository may return an id to a service so the service can pass it to the next SQL call in the same use case. Controllers do not put those ids in JSON.
 

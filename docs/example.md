@@ -16,7 +16,7 @@ The process creates `flaggator.db` if it is missing, applies migrations, and pri
 export TOKEN=the-printed-token
 ```
 
-This token is an operator credential. It can create projects, flags, targeting, and SDK keys. It is not the credential the application should ship with.
+This token is an operator credential. It can create projects, flags, targeting, and SDK tokens. It is not the credential the application should ship with.
 
 ## 2. Start the process
 
@@ -48,7 +48,7 @@ curl -s -X POST http://127.0.0.1:8080/v1/projects/shop/environments \
   -d '{"key":"prod","name":"Production"}'
 ```
 
-Each response is `201` with the key and the name. The environment response does not contain a secret. SDK keys are a separate step, so listing environments cannot leak one.
+Each response is `201` with the key and the name. The environment response does not contain a secret. SDK tokens are a separate step, so listing environments cannot leak one.
 
 ## 4. Create the flag, still off
 
@@ -69,7 +69,7 @@ Confirm that with the operator token. `default` is required and is used only whe
 curl -s -X POST http://127.0.0.1:8080/v1/evaluate \
   -H "Authorization: Bearer $TOKEN" \
   -H "Content-Type: application/json" \
-  -d '{"project_key":"shop","environment_key":"prod","flag_key":"checkout-v2","context":{"key":"alice","attributes":{"country":"US"}},"default":false}'
+  -d '{"project_key":"shop","environment_key":"prod","flag_key":"checkout-v2","context":{"subject":"alice","attributes":{"country":"US"}},"default":false}'
 ```
 
 ```json
@@ -135,7 +135,7 @@ Alice is targeted. Country is irrelevant:
 curl -s -X POST http://127.0.0.1:8080/v1/evaluate \
   -H "Authorization: Bearer $TOKEN" \
   -H "Content-Type: application/json" \
-  -d '{"project_key":"shop","environment_key":"prod","flag_key":"checkout-v2","context":{"key":"alice","attributes":{"country":"US"}},"default":false}'
+  -d '{"project_key":"shop","environment_key":"prod","flag_key":"checkout-v2","context":{"subject":"alice","attributes":{"country":"US"}},"default":false}'
 ```
 
 `value` is `true`, `variation_index` is `1`, `reason` is `target_match`, `rule_id` is `null`, `version` is `2`.
@@ -146,10 +146,10 @@ curl -s -X POST http://127.0.0.1:8080/v1/evaluate \
 curl -s -X POST http://127.0.0.1:8080/v1/evaluate \
   -H "Authorization: Bearer $TOKEN" \
   -H "Content-Type: application/json" \
-  -d '{"project_key":"shop","environment_key":"prod","flag_key":"checkout-v2","context":{"key":"user-11","attributes":{"country":"IT"}},"default":false}'
+  -d '{"project_key":"shop","environment_key":"prod","flag_key":"checkout-v2","context":{"subject":"user-11","attributes":{"country":"IT"}},"default":false}'
 ```
 
-`value` is `true`, `variation_index` is `1`, `reason` is `rule_match`, and `rule_id` is the id from the targeting response. Calling again with the same key and salt returns the same variation.
+`value` is `true`, `variation_index` is `1`, `reason` is `rule_match`, and `rule_id` is the id from the targeting response. Calling again with the same subject and salt returns the same variation.
 
 Bob is also in Italy, but the bucket of `checkout-v2:s1:bob` is `27461`, past the first share, so he stays on the old checkout:
 
@@ -157,7 +157,7 @@ Bob is also in Italy, but the bucket of `checkout-v2:s1:bob` is `27461`, past th
 curl -s -X POST http://127.0.0.1:8080/v1/evaluate \
   -H "Authorization: Bearer $TOKEN" \
   -H "Content-Type: application/json" \
-  -d '{"project_key":"shop","environment_key":"prod","flag_key":"checkout-v2","context":{"key":"bob","attributes":{"country":"IT"}},"default":false}'
+  -d '{"project_key":"shop","environment_key":"prod","flag_key":"checkout-v2","context":{"subject":"bob","attributes":{"country":"IT"}},"default":false}'
 ```
 
 `value` is `false`, `variation_index` is `0`, `reason` is `rule_match`.
@@ -168,12 +168,12 @@ Bob in the US does not match the country rule, and he is not targeted. Fallthrou
 curl -s -X POST http://127.0.0.1:8080/v1/evaluate \
   -H "Authorization: Bearer $TOKEN" \
   -H "Content-Type: application/json" \
-  -d '{"project_key":"shop","environment_key":"prod","flag_key":"checkout-v2","context":{"key":"bob","attributes":{"country":"US"}},"default":false}'
+  -d '{"project_key":"shop","environment_key":"prod","flag_key":"checkout-v2","context":{"subject":"bob","attributes":{"country":"US"}},"default":false}'
 ```
 
 `value` is `false`, `reason` is `fallthrough`, `rule_id` is `null`.
 
-A context with a country but no key does not enter the rollout. A rollout needs a context key. Omit `key`; an empty string is rejected.
+A context with a country but no subject does not enter the rollout. A rollout needs a subject. Omit `subject`; an empty string is rejected.
 
 ```bash
 curl -s -X POST http://127.0.0.1:8080/v1/evaluate \
@@ -184,12 +184,12 @@ curl -s -X POST http://127.0.0.1:8080/v1/evaluate \
 
 `value` is `false`, `reason` is `fallthrough`.
 
-## 7. Give the application its own key
+## 7. Give the application its own token
 
-The shop backend should not hold the management token. Create an SDK key bound to `prod`. The body is an empty object. `secret` is returned once.
+The shop backend should not hold the management token. Create an SDK token bound to `prod`. The body is an empty object. `secret` is returned once.
 
 ```bash
-curl -s -X POST http://127.0.0.1:8080/v1/projects/shop/environments/prod/sdk-keys \
+curl -s -X POST http://127.0.0.1:8080/v1/projects/shop/environments/prod/sdk-tokens \
   -H "Authorization: Bearer $TOKEN" \
   -H "Content-Type: application/json" \
   -d '{"name":"checkout-api"}'
@@ -207,22 +207,22 @@ The response looks like this (values differ every time):
 }
 ```
 
-`name` is the label you chose so the list stays readable. `id` is a decimal number and the only value the revoke path accepts. `prefix` is the first eight characters of `secret`; it is a label for logs, not the path id. Putting the prefix in the path returns `404` and leaves the key active.
+`name` is the label you chose so the list stays readable. `id` is a decimal number and the only value the revoke path accepts. `prefix` is the first eight characters of `secret`; it is a label for logs, not the path id. Putting the prefix in the path returns `404` and leaves the token active.
 
 ```bash
 export SDK_TOKEN='paste-the-secret-field-here'
-export SDK_KEY_ID=2
+export SDK_TOKEN_ID=2
 ```
 
-Replace `2` with the `id` from your create response. List active keys with `GET /v1/projects/shop/environments/prod/sdk-keys` if you lost the number; that list shows `id`, `name`, and `prefix`, never `secret`.
+Replace `2` with the `id` from your create response. List active tokens with `GET /v1/projects/shop/environments/prod/sdk-tokens` if you lost the number; that list shows `id`, `name`, and `prefix`, never `secret`.
 
-The application sends the SDK token and omits `project_key` and `environment_key`. The key already names `shop` / `prod`:
+The application sends the SDK token and omits `project_key` and `environment_key`. The token already names `shop` / `prod`:
 
 ```bash
 curl -s -X POST http://127.0.0.1:8080/v1/evaluate \
   -H "Authorization: Bearer $SDK_TOKEN" \
   -H "Content-Type: application/json" \
-  -d '{"flag_key":"checkout-v2","context":{"key":"user-11","attributes":{"country":"IT"}},"default":false}'
+  -d '{"flag_key":"checkout-v2","context":{"subject":"user-11","attributes":{"country":"IT"}},"default":false}'
 ```
 
 The decision matches the operator call for `user-11`: `true`, `rule_match`. If the body names a different project or environment, including one that does not exist, the response is `403`.
@@ -233,28 +233,28 @@ A page that needs every flag for one customer uses one call. Decisions are order
 curl -s -X POST http://127.0.0.1:8080/v1/evaluate-all \
   -H "Authorization: Bearer $SDK_TOKEN" \
   -H "Content-Type: application/json" \
-  -d '{"context":{"key":"user-11","attributes":{"country":"IT"}}}'
+  -d '{"context":{"subject":"user-11","attributes":{"country":"IT"}}}'
 ```
 
 The body is `{ "decisions": [ ... ] }`. With only `checkout-v2` in the project, that is the one decision.
 
-## 8. Retire the application key
+## 8. Retire the application token
 
-When the secret is no longer wanted, revoke it with the management token. The path must end with the numeric `id` from create (for example `.../sdk-keys/2`). A path that ends with the prefix returns `404` and does not revoke.
+When the secret is no longer wanted, revoke it with the management token. The path must end with the numeric `id` from create (for example `.../sdk-tokens/2`). A path that ends with the prefix returns `404` and does not revoke.
 
 ```bash
 curl -s -w "\n%{http_code}\n" -X DELETE \
-  http://127.0.0.1:8080/v1/projects/shop/environments/prod/sdk-keys/$SDK_KEY_ID \
+  http://127.0.0.1:8080/v1/projects/shop/environments/prod/sdk-tokens/$SDK_TOKEN_ID \
   -H "Authorization: Bearer $TOKEN"
 ```
 
-That must print `{}` and then `204`. If it prints `404`, `$SDK_KEY_ID` was not the numeric id and the secret still works. The next evaluation with that secret is `401`, the same response as an unknown token:
+That must print `{}` and then `204`. If it prints `404`, `$SDK_TOKEN_ID` was not the numeric id and the secret still works. The next evaluation with that secret is `401`, the same response as an unknown token:
 
 ```bash
 curl -s -o /dev/null -w "%{http_code}\n" -X POST http://127.0.0.1:8080/v1/evaluate \
   -H "Authorization: Bearer $SDK_TOKEN" \
   -H "Content-Type: application/json" \
-  -d '{"flag_key":"checkout-v2","context":{"key":"user-11","attributes":{"country":"IT"}},"default":false}'
+  -d '{"flag_key":"checkout-v2","context":{"subject":"user-11","attributes":{"country":"IT"}},"default":false}'
 ```
 
 That prints `401`.
@@ -267,7 +267,7 @@ The application can still ask. A missing flag is `200`, not `404`, and `value` i
 curl -s -X POST http://127.0.0.1:8080/v1/evaluate \
   -H "Authorization: Bearer $TOKEN" \
   -H "Content-Type: application/json" \
-  -d '{"project_key":"shop","environment_key":"prod","flag_key":"not-a-flag","context":{"key":"user-11","attributes":{}},"default":false}'
+  -d '{"project_key":"shop","environment_key":"prod","flag_key":"not-a-flag","context":{"subject":"user-11","attributes":{}},"default":false}'
 ```
 
 `value` is `false`, `variation_index` is `null`, `reason` is `flag_not_found`, `version` is `null`. Management routes stay strict: a missing project or flag on `GET` is `404`.

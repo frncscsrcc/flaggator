@@ -61,7 +61,7 @@ def create_flag(
 ) -> Flag:
     """Insert a flag, its variations, a disabled config per environment, and an audit row.
 
-    Raises Forbidden for an SDK key, NotFound when the project is absent,
+    Raises Forbidden for an SDK token, NotFound when the project is absent,
     ValidationError for a bad key, name, description, or variation list, and
     Conflict when the flag key already exists. Existing environments keep
     off variation 0 and fallthrough variation 0. The audit document has no
@@ -109,7 +109,7 @@ def get_flag(
 ) -> Flag:
     """Return one flag, its variations, and every environment configuration.
 
-    Raises Forbidden for an SDK key. Raises NotFound when the project or the
+    Raises Forbidden for an SDK token. Raises NotFound when the project or the
     flag is absent, including when the key cannot exist. Does not open a
     transaction.
     """
@@ -129,7 +129,7 @@ def list_flags_page(
 
     environment_key, when set, adds that environment's summary to each item
     and raises NotFound when the environment is absent. Raises Forbidden for
-    an SDK key and ValidationError for a bad limit or cursor. next_key is
+    an SDK token and ValidationError for a bad limit or cursor. next_key is
     None when no further page exists. Does not open a transaction.
     """
     require_management(principal)

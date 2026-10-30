@@ -78,18 +78,32 @@ class PrerequisiteInput:
 
 
 @dataclass(frozen=True)
+class TargetInput:
+    """Subjects and segments pinned to one variation index.
+
+    segments holds public keys of segments in the same environment. An
+    empty segments tuple means the variation cites subjects only.
+    """
+
+    variation_index: int
+    subjects: tuple[str, ...]
+    segments: tuple[str, ...]
+
+
+@dataclass(frozen=True)
 class ReplaceTargeting:
     """The body of a targeting replace.
 
     version is the version the client read. A write that sends any other
-    version conflicts. targets pairs a variation index with the context keys
-    pinned to it. The lists are checked to be disjoint in the service.
+    version conflicts. targets pairs a variation index with the subjects
+    and segment keys pinned to it. Inline subject lists are checked to be
+    disjoint in the service.
     """
 
     enabled: bool
     off_variation: int
     fallthrough: VariationServeInput | RolloutInput
     rules: tuple[RuleInput, ...]
-    targets: tuple[tuple[int, tuple[str, ...]], ...]
+    targets: tuple[TargetInput, ...]
     prerequisites: tuple[PrerequisiteInput, ...]
     version: int

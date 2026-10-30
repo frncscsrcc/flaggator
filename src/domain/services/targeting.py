@@ -26,6 +26,7 @@ from domain.validation import (
     MAX_CLAUSES,
     MAX_CLAUSE_VALUES,
     MAX_RULES,
+    MAX_SEGMENTS_PER_TARGET,
     MAX_TARGETS,
     ROLLOUT_WEIGHT_TOTAL,
     is_public_key,
@@ -42,6 +43,7 @@ from repositories.flag_configs import (
 from repositories.flags import FlagRow, find_flag, list_variations
 from repositories.json_text import dump_json_text
 from repositories.projects import ProjectRow, find_project
+from repositories.segments import list_segment_keys
 
 # eq takes one scalar. The numeric operators take one number. The rest take
 # one or more scalars, and the string operators take strings.
@@ -85,7 +87,7 @@ def get_targeting(
 ) -> FlagConfig:
     """Return the stored targeting for one flag in one environment.
 
-    Raises Forbidden for an SDK key. Raises NotFound when the project, the
+    Raises Forbidden for an SDK token. Raises NotFound when the project, the
     flag, or the environment is absent, including when a key cannot exist.
     Reads SQL, not a cache. Does not open a transaction.
     """
@@ -109,7 +111,7 @@ def replace_targeting(
 
     command.version must be the version the caller read. A different stored
     version raises Conflict and leaves the row unchanged. Raises Forbidden
-    for an SDK key, NotFound when the project, flag, or environment is
+    for an SDK token, NotFound when the project, flag, or environment is
     absent, and ValidationError when the document breaks a targeting rule.
     The audit documents are the previous and stored configurations.
     """
@@ -244,6 +246,7 @@ def _prepare(
         "Use an index from this flag's variation list.",
     )
     targets = _target_lists(command, variation_count)
+    _require_target_segments(connection, environment_id, command)
     rules = _rule_documents(current, command, variation_count)
     fallthrough = _serve_document(
         command.fallthrough,
@@ -273,34 +276,91 @@ def _prepare(
     )
 
 
-def _target_lists(command: ReplaceTargeting, variation_count: int) -> dict[str, list[str]]:
+def _target_lists(command: ReplaceTargeting, variation_count: int) -> dict[str, object]:
     """Return the target map, with variation indexes as decimal strings.
 
-    Raises ValidationError when an index is missing, a context key is empty
-    or repeated, or the total number of keys is over the cap. Does not read
-    the database.
+    A variation with no segment keys is stored as a list of subjects. A
+    variation that cites segments is stored as an object with both lists.
+    Raises ValidationError when an index is missing, a subject is empty or
+    repeated, a segment key is repeated or shared, or a cap is exceeded.
+    Does not read the database.
     """
-    seen: set[str] = set()
-    document: dict[str, list[str]] = {}
-    for index, context_keys in command.targets:
+    seen_subjects: set[str] = set()
+    seen_segments: set[str] = set()
+    document: dict[str, object] = {}
+    for target in command.targets:
         _require_index(
-            index,
+            target.variation_index,
             variation_count,
             "targets",
             "Use an index from this flag's variation list.",
         )
         cleaned: list[str] = []
-        for context_key in context_keys:
-            if context_key == "":
-                _reject("targets", "A target context key must not be empty.")
-            if context_key in seen:
-                _reject("targets", "Target lists must not share a context key.")
-            if len(seen) >= MAX_TARGETS:
-                _reject("targets", "A configuration can target at most 1000 context keys.")
-            seen.add(context_key)
-            cleaned.append(context_key)
-        document[str(index)] = cleaned
+        for subject in target.subjects:
+            if subject == "":
+                _reject("targets", "A target subject must not be empty.")
+            if subject in seen_subjects:
+                _reject("targets", "Target lists must not share a subject.")
+            if len(seen_subjects) >= MAX_TARGETS:
+                _reject("targets", "A configuration can target at most 1000 subjects.")
+            seen_subjects.add(subject)
+            cleaned.append(subject)
+        segment_keys = _segment_keys(target.segments, seen_segments)
+        if segment_keys:
+            document[str(target.variation_index)] = {
+                "segments": segment_keys,
+                "subjects": cleaned,
+            }
+        else:
+            document[str(target.variation_index)] = cleaned
     return document
+
+
+def _segment_keys(keys: tuple[str, ...], seen: set[str]) -> list[str]:
+    """Return the segment keys for one variation.
+
+    seen holds keys already cited by an earlier variation in this document.
+    Raises ValidationError when a key is not a public key, is repeated, is
+    shared with another variation, or when the variation cites more than
+    the cap. Does not read the database.
+    """
+    if len(keys) > MAX_SEGMENTS_PER_TARGET:
+        _reject("targets", "A variation can cite at most 20 segments.")
+    cleaned: list[str] = []
+    local: set[str] = set()
+    for key in keys:
+        if not is_public_key(key):
+            _reject("targets", "Use a segment key in this environment.")
+        if key in local:
+            _reject("targets", "A target must not repeat a segment.")
+        if key in seen:
+            _reject("targets", "Target lists must not share a segment.")
+        local.add(key)
+        seen.add(key)
+        cleaned.append(key)
+    return cleaned
+
+
+def _require_target_segments(
+    connection: Connection,
+    environment_id: int,
+    command: ReplaceTargeting,
+) -> None:
+    """Raise ValidationError when a cited segment is not in the environment.
+
+    An empty citation list does not read the database. Does not commit.
+    """
+    needed: list[str] = []
+    for target in command.targets:
+        for key in target.segments:
+            if key not in needed:
+                needed.append(key)
+    if not needed:
+        return
+    known = set(list_segment_keys(connection, environment_id))
+    for key in needed:
+        if key not in known:
+            _reject("targets", "Segment does not exist.")
 
 
 def _rule_documents(

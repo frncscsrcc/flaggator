@@ -85,7 +85,7 @@ A repository function does not commit or roll back. The service opens the transa
 
 ### P8. Two credential kinds
 
-An **SDK key** is bound to one environment and may evaluate and read that environment's configuration. A **management token** may mutate. v1 has no user accounts: an operator is whoever holds a management token. Detail in [Security](security.md).
+An **SDK token** is bound to one environment and may evaluate and read that environment's configuration. A **management token** may mutate. v1 has no user accounts: an operator is whoever holds a management token. Detail in [Security](security.md).
 
 ### P9. One variation model
 
@@ -98,10 +98,11 @@ In the first implementation:
 - Projects and environments
 - Flags with ordered JSON variations
 - Per-environment on/off, off variation, fallthrough, ordered rules, individual targets, prerequisites
+- Segments of subjects, scoped to one environment and cited from targets
 - The clause operators listed in [Domain](domain.md)
 - Percentage rollouts with a stable salt
 - Server-side evaluation for one flag and for every flag in the environment
-- Management tokens and per-environment SDK keys, stored as hashes
+- Management tokens and per-environment SDK tokens, stored as hashes
 - An audit record for every successful mutation
 - Optimistic concurrency on targeting updates, using a config version
 - SQLite by default, MySQL when configured, numbered SQL migrations per engine
@@ -111,7 +112,7 @@ Explicitly later, so the design does not pretend they exist:
 - Web UI
 - Streaming updates
 - A client SDK that evaluates locally (the algorithm is still specified now)
-- Segments
+- Segment clauses and a `segment_match` operator
 - Experiments and metrics
 - Approval workflows and scheduled changes
 - Accounts, SSO, and roles finer than the two credential kinds

@@ -24,6 +24,7 @@ from domain.models.evaluation import (
     Rollout,
     RolloutShare,
     Rule,
+    TargetGroup,
     VariationServe,
 )
 from domain.services.evaluator import evaluate
@@ -34,7 +35,7 @@ class EvaluatorTests(unittest.TestCase):
         """The checkout-v2 table in the domain doc, including a disabled flag.
 
         Alice is targeted even when her country would also match the rule.
-        A rollout rule does not match without a context key.
+        A rollout rule does not match without a subject.
         """
         definitions = {"checkout-v2": self.checkout(True)}
         disabled = {"checkout-v2": self.checkout(False)}
@@ -58,6 +59,48 @@ class EvaluatorTests(unittest.TestCase):
         self.assertEqual(
             evaluate("checkout-v2", definitions, Context(None, {"country": "IT"})),
             self.decision(False, 0, REASON_FALLTHROUGH, None),
+        )
+
+    def test_a_segment_pins_the_subject_and_the_first_index_wins(self) -> None:
+        """A cited segment matches like an inline subject. The first index wins.
+
+        iris is in both segments, so variation 0 wins. A context without a
+        subject does not enter the target.
+        """
+        definition = FlagDefinition(
+            key="checkout-v2",
+            variations=(False, True),
+            enabled=True,
+            off_variation=0,
+            fallthrough=VariationServe(0),
+            rules=(),
+            targets=(
+                TargetGroup(0, (), ("testers",)),
+                TargetGroup(1, ("alice",), ("developers",)),
+            ),
+            prerequisites=(),
+            version=1,
+            segments={
+                "developers": ("iris", "bob"),
+                "testers": ("iris",),
+            },
+        )
+        definitions = {"checkout-v2": definition}
+        self.assertEqual(
+            evaluate("checkout-v2", definitions, Context("iris", {})),
+            self.decision_for("checkout-v2", False, 0, REASON_TARGET_MATCH, None),
+        )
+        self.assertEqual(
+            evaluate("checkout-v2", definitions, Context("bob", {})),
+            self.decision_for("checkout-v2", True, 1, REASON_TARGET_MATCH, None),
+        )
+        self.assertEqual(
+            evaluate("checkout-v2", definitions, Context("alice", {})),
+            self.decision_for("checkout-v2", True, 1, REASON_TARGET_MATCH, None),
+        )
+        self.assertEqual(
+            evaluate("checkout-v2", definitions, Context(None, {})),
+            self.decision_for("checkout-v2", False, 0, REASON_FALLTHROUGH, None),
         )
 
     def test_each_operator_and_a_missing_attribute(self) -> None:
@@ -97,7 +140,7 @@ class EvaluatorTests(unittest.TestCase):
         self.assertFalse(self.matches("lte", (30,), {"country": 31}))
         self.assertFalse(self.matches("regex", ("IT",), {"country": "IT"}))
         self.assertFalse(self.matches("eq", ("IT",), {"Country": "IT"}))
-        self.assertTrue(self.matches("eq", ("IT",), {"country": "IT"}, key=None))
+        self.assertTrue(self.matches("eq", ("IT",), {"country": "IT"}, subject=None))
 
     def test_every_clause_must_match_and_the_first_rule_wins(self) -> None:
         """A rule is an AND. A later rule is not consulted after a match."""
@@ -139,7 +182,7 @@ class EvaluatorTests(unittest.TestCase):
         self.assertFalse(self.matches("gt", (10,), {"country": [30]}))
 
     def test_rollout_bucket_is_stable_and_walks_in_order(self) -> None:
-        """The same key and salt select the same variation.
+        """The same subject and salt select the same variation.
 
         bob's bucket is 27461, so the 10000 weight does not cover it and the
         next share does. user-11 lands in the first share.
@@ -273,7 +316,7 @@ class EvaluatorTests(unittest.TestCase):
                     Rollout("s1", (RolloutShare(1, 10000), RolloutShare(0, 90000))),
                 ),
             ),
-            targets=((1, ("alice",)),),
+            targets=(TargetGroup(1, ("alice",), ()),),
             prerequisites=(),
             version=7,
         )
@@ -339,7 +382,7 @@ class EvaluatorTests(unittest.TestCase):
         operator: str,
         values: tuple[object, ...],
         attributes: dict,
-        key: str | None = "user",
+        subject: str | None = "user",
     ) -> bool:
         """Return True when one clause serves variation 1.
 
@@ -349,7 +392,7 @@ class EvaluatorTests(unittest.TestCase):
             (Rule("r", (Clause("country", operator, values),), VariationServe(1)),),
             VariationServe(0),
         )
-        decision = evaluate("flag", {"flag": definition}, Context(key, attributes))
+        decision = evaluate("flag", {"flag": definition}, Context(subject, attributes))
         return decision.variation_index == 1
 
     def decision(self, value: object, variation_index: int, reason: str, rule_id: str | None) -> Decision:
@@ -375,12 +418,12 @@ class EvaluatorTests(unittest.TestCase):
             version=version,
         )
 
-    def bucket(self, flag_key: str, salt: str, context_key: str) -> int:
+    def bucket(self, flag_key: str, salt: str, subject: str) -> int:
         """Return the domain bucket, computed here rather than by the evaluator.
 
         This is the spec's SHA-256 formula, so the test does not ask the
         function for the number it is about to trust.
         """
-        material = flag_key + ":" + salt + ":" + context_key
+        material = flag_key + ":" + salt + ":" + subject
         digest = hashlib.sha256(material.encode("utf-8")).digest()
         return int.from_bytes(digest[0:4], "big") % 100000

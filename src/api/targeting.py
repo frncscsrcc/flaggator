@@ -18,6 +18,7 @@ from domain.models.targeting import (
     RolloutInput,
     RolloutWeightInput,
     RuleInput,
+    TargetInput,
     VariationServeInput,
 )
 from domain.services import targeting as targeting_service
@@ -263,24 +264,59 @@ def _parse_weight(item: object, field: str) -> RolloutWeightInput:
     return RolloutWeightInput(variation_index=item["variation_index"], weight=item["weight"])
 
 
-def _parse_targets(targets: dict) -> tuple[tuple[int, tuple[str, ...]], ...]:
+def _parse_targets(targets: dict) -> tuple[TargetInput, ...]:
     """Return target lists in object order.
 
-    Keys are variation indexes written as decimal strings. Raises
-    ValidationError when a key is not that form or a value is not a list of
-    strings. Does not read the database.
+    A value that is a list is subjects only. A value that is an object has
+    subjects and segments. Names are variation indexes written as decimal
+    strings. Raises ValidationError when a name or a value is not that
+    form. Does not read the database.
     """
-    parsed: list[tuple[int, tuple[str, ...]]] = []
-    for key, context_keys in targets.items():
-        if not isinstance(context_keys, list):
-            _reject("targets", "Each target list must be a list of context keys.")
-        cleaned: list[str] = []
-        for context_key in context_keys:
-            if not isinstance(context_key, str):
-                _reject("targets", "A target context key must be a string.")
-            cleaned.append(context_key)
-        parsed.append((_target_index(key), tuple(cleaned)))
+    parsed: list[TargetInput] = []
+    for index, value in targets.items():
+        subjects, segments = _parse_target_value(value)
+        parsed.append(
+            TargetInput(
+                variation_index=_target_index(index),
+                subjects=subjects,
+                segments=segments,
+            )
+        )
     return tuple(parsed)
+
+
+def _parse_target_value(value: object) -> tuple[tuple[str, ...], tuple[str, ...]]:
+    """Return the subjects and segment keys in one target value.
+
+    A list is subjects and no segments. An object must name both lists.
+    Raises ValidationError otherwise. Does not read the database.
+    """
+    if isinstance(value, list):
+        return _string_list(value, "A target subject must be a string."), ()
+    if isinstance(value, dict):
+        _reject_unknown(value, {"subjects", "segments"}, "targets")
+        if "subjects" not in value or "segments" not in value:
+            _reject("targets", "A target object needs subjects and segments.")
+        if not isinstance(value["subjects"], list) or not isinstance(value["segments"], list):
+            _reject("targets", "A target object needs a list of subjects and a list of segments.")
+        return (
+            _string_list(value["subjects"], "A target subject must be a string."),
+            _string_list(value["segments"], "A segment key must be a string."),
+        )
+    _reject("targets", "Each target list must be a list of subjects or an object with subjects and segments.")
+
+
+def _string_list(values: list, message: str) -> tuple[str, ...]:
+    """Return values when every item is a string.
+
+    Raises ValidationError with message otherwise. Does not read the database.
+    """
+    cleaned: list[str] = []
+    for item in values:
+        if not isinstance(item, str):
+            _reject("targets", message)
+        cleaned.append(item)
+    return tuple(cleaned)
 
 
 def _parse_prerequisites(prerequisites: list) -> tuple[PrerequisiteInput, ...]:
@@ -307,15 +343,15 @@ def _parse_prerequisites(prerequisites: list) -> tuple[PrerequisiteInput, ...]:
     return tuple(parsed)
 
 
-def _target_index(key: str) -> int:
+def _target_index(index: str) -> int:
     """Return the variation index encoded as a decimal string.
 
     "0" and "12" are indexes. "01" and "1.0" are not. Raises ValidationError
     otherwise. Does not read the database.
     """
-    if key == "0" or (key.isdigit() and key[0] != "0"):
-        return int(key)
-    _reject("targets", "Target keys are variation indexes, written as decimal strings.")
+    if index == "0" or (index.isdigit() and index[0] != "0"):
+        return int(index)
+    _reject("targets", "Each name in targets is a variation index, written as a decimal string.")
 
 
 def _reject_unknown(body: dict, allowed: set[str], field: str) -> None:

@@ -15,7 +15,7 @@ class Principal:
     """Who is calling.
 
     credential_id is the audit actor. kind is "management" or "sdk".
-    environment_id is set for an SDK key and None for a management token.
+    environment_id is set for an SDK token and None for a management token.
     prefix is the non-secret label stored beside the hash. This object does
     not know whether it came from a stored token or, later, a JWT.
     """

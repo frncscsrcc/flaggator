@@ -24,7 +24,7 @@ Authorization: Bearer <token>
 | Credential | Presented as | Scope |
 | --- | --- | --- |
 | Management token | Bearer token | All management routes. May call evaluation routes, and then must name `project_key` and `environment_key` in the body or path. |
-| SDK key | Bearer token | Evaluation routes only. Project and environment are implied by the key. If the request also names them, they must match the key or the response is 403. |
+| SDK token | Bearer token | Evaluation routes only. Project and environment are implied by the token. If the request also names them, they must match the token or the response is 403. |
 
 A missing or unknown token is 401. A known token used on a route it cannot call is 403. Storage and hashing are specified in [Security](security.md). v1 tokens are opaque. A standard JWT is a later way to produce the same principal ([P13](decisions.md)); this version does not accept one.
 
@@ -93,17 +93,31 @@ Base path: `/v1/projects`. All require a management token.
 | `POST` | `/v1/projects/{projectKey}/environments` | Create `{ "key", "name" }`. Response is 201 and `{ "key", "name" }`. Creating an environment does not copy targeting from another environment. Flags exist at project level; the new environment starts with each existing flag disabled, off variation `0`, and fallthrough variation `0`. |
 | `GET` | `/v1/projects/{projectKey}/environments` | List environments in the project. An unknown project is 404. |
 
-The response for an environment includes its key and name. It does not include the SDK key secret. SDK key issuance is a separate action so listing environments cannot leak secrets. A list response uses `next_cursor` null when the page is the last one.
+The response for an environment includes its key and name. It does not include the SDK token secret. SDK token issuance is a separate action so listing environments cannot leak secrets. A list response uses `next_cursor` null when the page is the last one.
 
-### SDK keys
+### SDK tokens
 
 | Method | Path | Behavior |
 | --- | --- | --- |
-| `POST` | `/v1/projects/{projectKey}/environments/{environmentKey}/sdk-keys` | Create a key. The plaintext secret is returned once, in this response. |
-| `GET` | `/v1/projects/{projectKey}/environments/{environmentKey}/sdk-keys` | List key ids, names, prefixes, and created timestamps. No secrets. |
-| `DELETE` | `/v1/projects/{projectKey}/environments/{environmentKey}/sdk-keys/{keyId}` | Revoke. Evaluation with that key becomes 401. |
+| `POST` | `/v1/projects/{projectKey}/environments/{environmentKey}/sdk-tokens` | Create a token. The plaintext secret is returned once, in this response. |
+| `GET` | `/v1/projects/{projectKey}/environments/{environmentKey}/sdk-tokens` | List ids, names, prefixes, and created timestamps. No secrets. |
+| `DELETE` | `/v1/projects/{projectKey}/environments/{environmentKey}/sdk-tokens/{id}` | Revoke. Evaluation with that token becomes 401. |
 
-Create takes `{ "name" }`. `name` is a non-secret label for the operator (same rules as a display name). An active key in the same environment with the same name is 409. The 201 response is `{ "id", "name", "prefix", "created_at", "secret" }`. `id` is the decimal credential id used in the revoke path. `prefix` is the first eight characters of the secret. List items are `{ "id", "name", "prefix", "created_at" }` and do not include `secret`. The audit row stores the id, the name, and the prefix, not the secret. `keyId` that is missing, already revoked, or not a decimal id without a leading zero is 404.
+Create takes `{ "name" }`. `name` is a non-secret label for the operator (same rules as a display name). An active token in the same environment with the same name is 409. The 201 response is `{ "id", "name", "prefix", "created_at", "secret" }`. `id` is the decimal credential id used in the revoke path. `prefix` is the first eight characters of the secret. List items are `{ "id", "name", "prefix", "created_at" }` and do not include `secret`. The audit row stores the id, the name, and the prefix, not the secret. An `id` that is missing, already revoked, or not a decimal id without a leading zero is 404.
+
+### Segments
+
+A segment is a set of subjects in one environment. Targets cite its `key`. `name` is the display label.
+
+| Method | Path | Behavior |
+| --- | --- | --- |
+| `POST` | `/v1/projects/{projectKey}/environments/{environmentKey}/segments` | Create `{ "key", "name", "subjects" }`. Response is 201 and that document. |
+| `GET` | `/v1/projects/{projectKey}/environments/{environmentKey}/segments` | List segments in the environment. Each item is `{ "key", "name", "subjects" }`. |
+| `GET` | `/v1/projects/{projectKey}/environments/{environmentKey}/segments/{segmentKey}` | Fetch one segment. |
+| `PUT` | same | Replace `name` and `subjects`. The key in the path does not change. |
+| `DELETE` | same | Delete. 204. A target in this environment that cites the key is 409. |
+
+`subjects` is a list of strings, each 1 to 1024 characters, with no duplicates, at most 1000. An empty list is valid and matches nobody. A duplicate key in the same environment is 409. A missing segment is 404. The audit actions are `segment.create`, `segment.update`, and `segment.delete`. `flag_key` is null.
 
 ### Flags
 
@@ -131,7 +145,7 @@ One environment's configuration is replaced as a whole document. Partial patches
 
 `PUT` is idempotent only when replayed with the same version and the same body against the same stored version: the second call conflicts, because the version has moved. Clients retry by reading again. That is the concurrency rule, and it is preferable to a silent overwrite.
 
-The response document is the stored configuration: `enabled`, `off_variation`, `fallthrough`, `rules`, `targets`, `prerequisites`, and `version`. It does not repeat the environment key, which is already in the path. A rule `id` is omitted on create; the service assigns it and returns it. Sending a stored id keeps that rule. A rollout omits `salt` to keep the stored salt, or to have one assigned the first time that rollout is saved. Sending a different salt reshuffles that rollout. Target keys are variation indexes written as decimal strings, with no leading zero.
+The response document is the stored configuration: `enabled`, `off_variation`, `fallthrough`, `rules`, `targets`, `prerequisites`, and `version`. It does not repeat the environment key, which is already in the path. A rule `id` is omitted on create; the service assigns it and returns it. Sending a stored id keeps that rule. A rollout omits `salt` to keep the stored salt, or to have one assigned the first time that rollout is saved. Sending a different salt reshuffles that rollout. Names in targets are variation indexes written as decimal strings, with no leading zero. A value is a list of subjects, or an object `{ "subjects", "segments" }`. `segments` holds keys of segments in that environment. A list is stored when the variation cites no segment. A missing segment, a repeated key, or the same key on two indexes is 400. At most 1000 inline subjects, and at most 20 segment keys on one index.
 
 ### Audit
 
@@ -143,7 +157,7 @@ An audit item: `id`, `at`, `actor` (credential id and kind, never the secret), `
 
 ## Evaluation resources
 
-These require an SDK key or a management token. With an SDK key, the environment is the key's environment and a mismatched project or environment field in the body is 403.
+These require an SDK token or a management token. With an SDK token, the environment is the token's environment and a mismatched project or environment field in the body is 403.
 
 ### Evaluate one
 
@@ -155,16 +169,16 @@ These require an SDK key or a management token. With an SDK key, the environment
   "environment_key": "prod",
   "flag_key": "checkout-v2",
   "context": {
-    "key": "user-123",
+    "subject": "user-123",
     "attributes": {"country": "IT"}
   },
   "default": false
 }
 ```
 
-Evaluation is always for one environment. `project_key` and `environment_key` are required for a management token. An SDK key already identifies the environment and may omit them; a body that includes `project_key` or `environment_key` must match that key, or the response is 403. A mismatch is 403 even when the other environment does not exist.
+Evaluation is always for one environment. `project_key` and `environment_key` are required for a management token. An SDK token already identifies the environment and may omit them; a body that includes `project_key` or `environment_key` must match that token, or the response is 403. A mismatch is 403 even when the other environment does not exist.
 
-`context.key`, when present, is a non-empty string of at most 1024 characters. `context.attributes` has at most 50 entries. Each name is 1 to 64 characters. Each value is a boolean, a finite number, a string of at most 1024 characters, or an array of those scalars. Null, objects, and nested arrays are rejected.
+`context.subject`, when present, is a non-empty string of at most 1024 characters. `context.attributes` has at most 50 entries. Each name is 1 to 64 characters. Each value is a boolean, a finite number, a string of at most 1024 characters, or an array of those scalars. Null, objects, and nested arrays are rejected.
 
 Response:
 
@@ -195,11 +209,11 @@ This route is for server-side fan-out. It is not a dump of rule trees. Clients t
 
 `GET /v1/projects/{projectKey}/environments/{environmentKey}/evaluation-config`
 
-Returns the variation lists and environment configurations required to run the algorithm in [Domain](domain.md). SDK keys may call it for their own environment. v1 does not ship a client evaluator; the route exists so the data needed for one is the same data the server uses, and so a server-side caller can cache definitions. Secrets are absent. Salts are present, because bucketing requires them; treat this response as environment-confidential and only serve it to a credential of that environment.
+Returns the variation lists, environment configurations, and segment membership required to run the algorithm in [Domain](domain.md). The document has `project_key`, `environment_key`, `flags`, and `segments`. `segments` maps each segment key to its subjects. Targets inside `flags` keep the keys they cite; the membership is not copied into each flag. SDK tokens may call it for their own environment. v1 does not ship a client evaluator; the route exists so the data needed for one is the same data the server uses, and so a server-side caller can cache definitions. Secrets are absent. Salts are present, because bucketing requires them; treat this response as environment-confidential and only serve it to a credential of that environment.
 
 ## Create bodies and conflicts
 
-`POST` of a project, environment, or flag with a key that already exists returns 409 `conflict`. There is no silent upsert on create.
+`POST` of a project, environment, flag, or segment with a key that already exists returns 409 `conflict`. There is no silent upsert on create. Deleting a segment that a target still cites is also 409.
 
 ## Pagination
 

@@ -5,7 +5,7 @@ A rollout salt is already stored; evaluation never mints one.
 """
 
 from collections.abc import Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 REASON_OFF = "off"
 REASON_PREREQUISITE_FAILED = "prerequisite_failed"
@@ -19,12 +19,12 @@ REASON_FLAG_NOT_FOUND = "flag_not_found"
 class Context:
     """The subject of one evaluation.
 
-    key is None, or empty, when the caller has no context key. Targets and
+    subject is None, or empty, when the caller has no subject. Targets and
     rollouts do not match in that case. attributes is a flat map; a missing
     name is not a value.
     """
 
-    key: str | None
+    subject: str | None
     attributes: Mapping[str, object]
 
 
@@ -89,12 +89,26 @@ class Prerequisite:
 
 
 @dataclass(frozen=True)
+class TargetGroup:
+    """Subjects and segment keys pinned to one variation.
+
+    segments names keys in FlagDefinition.segments. An empty segments tuple
+    pins subjects only. variation_index is the index those members receive.
+    """
+
+    variation_index: int
+    subjects: tuple[str, ...]
+    segments: tuple[str, ...]
+
+
+@dataclass(frozen=True)
 class FlagDefinition:
     """One flag's variations and one environment's targeting.
 
-    key is the public flag key mixed into rollout buckets. targets pairs a
-    variation index with the context keys pinned to it. fallthrough is a
-    variation or a rollout.
+    key is the public flag key mixed into rollout buckets. targets pins
+    subjects and segment keys to variation indexes. segments maps every
+    segment key in the environment to its subjects, including keys this
+    flag does not cite. fallthrough is a variation or a rollout.
     """
 
     key: str
@@ -103,9 +117,10 @@ class FlagDefinition:
     off_variation: int
     fallthrough: VariationServe | Rollout
     rules: tuple[Rule, ...]
-    targets: tuple[tuple[int, tuple[str, ...]], ...]
+    targets: tuple[TargetGroup, ...]
     prerequisites: tuple[Prerequisite, ...]
     version: int
+    segments: Mapping[str, tuple[str, ...]] = field(default_factory=dict)
 
 
 @dataclass(frozen=True)

@@ -22,6 +22,17 @@ CREATE TABLE environments (
         FOREIGN KEY (project_id) REFERENCES projects (id)
 );
 
+CREATE TABLE segments (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    environment_id INTEGER NOT NULL,
+    `key` TEXT NOT NULL,
+    name TEXT NOT NULL,
+    subjects_json TEXT NOT NULL,
+    CONSTRAINT uq_segments_environment_key UNIQUE (environment_id, `key`),
+    CONSTRAINT fk_segments_environment
+        FOREIGN KEY (environment_id) REFERENCES environments (id)
+);
+
 CREATE TABLE flags (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     project_id INTEGER NOT NULL,

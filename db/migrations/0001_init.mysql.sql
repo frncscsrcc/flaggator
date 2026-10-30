@@ -22,6 +22,17 @@ CREATE TABLE environments (
         FOREIGN KEY (project_id) REFERENCES projects (id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
+CREATE TABLE segments (
+    id BIGINT NOT NULL AUTO_INCREMENT PRIMARY KEY,
+    environment_id BIGINT NOT NULL,
+    `key` VARCHAR(128) NOT NULL,
+    name VARCHAR(256) NOT NULL,
+    subjects_json TEXT NOT NULL,
+    CONSTRAINT uq_segments_environment_key UNIQUE (environment_id, `key`),
+    CONSTRAINT fk_segments_environment
+        FOREIGN KEY (environment_id) REFERENCES environments (id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
 CREATE TABLE flags (
     id BIGINT NOT NULL AUTO_INCREMENT PRIMARY KEY,
     project_id BIGINT NOT NULL,
