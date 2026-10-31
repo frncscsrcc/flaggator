@@ -23,8 +23,21 @@ class Project:
 class Environment:
     """One environment as the API shows it.
 
-    key is unique inside its project. name is the display name. The SDK
-    secret is not a field here.
+    key is unique inside its project. name is the display name. protected
+    is true when writes need protected_writer. The SDK secret is not a
+    field here.
+    """
+
+    key: str
+    name: str
+    protected: bool
+
+
+@dataclass(frozen=True)
+class CreateNamed:
+    """The key and name from a create body.
+
+    Used for a project. The service decides which table the pair belongs to.
     """
 
     key: str
@@ -32,15 +45,26 @@ class Environment:
 
 
 @dataclass(frozen=True)
-class CreateNamed:
-    """The key and name from a create body.
+class CreateEnvironment:
+    """The body for creating an environment.
 
-    Used for both a project and an environment. The service decides which
-    table the pair belongs to.
+    protected defaults to false when the client omits it.
     """
 
     key: str
     name: str
+    protected: bool
+
+
+@dataclass(frozen=True)
+class PatchEnvironment:
+    """The body for patching an environment.
+
+    None means the field was omitted and stays unchanged.
+    """
+
+    name: str | None
+    protected: bool | None
 
 
 @dataclass(frozen=True)

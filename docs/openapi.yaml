@@ -8,7 +8,6 @@ info:
     that are not implemented yet. Update this file in the same change as a
     route, a request body, or a response body.
 
-    Audit reads are not in this file yet.
 servers:
   - url: http://127.0.0.1:8080
     description: Default bind address
@@ -16,12 +15,15 @@ security:
   - bearerAuth: []
 tags:
   - name: Health
+  - name: Auth
+  - name: Users
   - name: Projects
   - name: Environments
   - name: Flags
   - name: Targeting
   - name: Segments
   - name: SDK tokens
+  - name: Audit
   - name: Evaluation
 paths:
   /health:
@@ -37,6 +39,152 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/Health"
+  /v1/auth/login:
+    post:
+      tags: [Auth]
+      summary: Local login
+      operationId: login
+      security: []
+      description: |
+        Issues a local access JWT. No bearer token is required. Wrong email
+        or password, a disabled user, and an IdP-only user (no password)
+        share the same 401. FLAGGATOR_JWT_SECRET must be set.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/LoginRequest"
+      responses:
+        "200":
+          description: Access token for Authorization Bearer.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AccessToken"
+        "400":
+          $ref: "#/components/responses/ValidationError"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "405":
+          $ref: "#/components/responses/MethodNotAllowed"
+        "500":
+          $ref: "#/components/responses/StorageError"
+  /v1/users:
+    get:
+      tags: [Users]
+      summary: List users
+      operationId: listUsers
+      parameters:
+        - $ref: "#/components/parameters/Limit"
+        - $ref: "#/components/parameters/Cursor"
+      responses:
+        "200":
+          description: One page of users, ordered by id. Passwords are absent.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/UserPage"
+        "400":
+          $ref: "#/components/responses/ValidationError"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "405":
+          $ref: "#/components/responses/MethodNotAllowed"
+        "500":
+          $ref: "#/components/responses/StorageError"
+    post:
+      tags: [Users]
+      summary: Create a user
+      operationId: createUser
+      description: |
+        password may be omitted for an IdP-only user. roles is a non-empty
+        list drawn from reader, writer, and protected_writer.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UserCreate"
+      responses:
+        "201":
+          description: The stored user without a password.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/User"
+        "400":
+          $ref: "#/components/responses/ValidationError"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "405":
+          $ref: "#/components/responses/MethodNotAllowed"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        "500":
+          $ref: "#/components/responses/StorageError"
+  /v1/users/{userId}:
+    get:
+      tags: [Users]
+      summary: Fetch one user
+      operationId: getUser
+      parameters:
+        - $ref: "#/components/parameters/UserId"
+      responses:
+        "200":
+          description: The user without a password.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/User"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "405":
+          $ref: "#/components/responses/MethodNotAllowed"
+        "500":
+          $ref: "#/components/responses/StorageError"
+    patch:
+      tags: [Users]
+      summary: Patch a user
+      operationId: patchUser
+      description: |
+        Updates name, password, roles, and/or disabled. Email cannot change.
+        disabled true sets disabled_at; false clears it.
+      parameters:
+        - $ref: "#/components/parameters/UserId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UserPatch"
+      responses:
+        "200":
+          description: The stored user after the patch.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/User"
+        "400":
+          $ref: "#/components/responses/ValidationError"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "405":
+          $ref: "#/components/responses/MethodNotAllowed"
+        "500":
+          $ref: "#/components/responses/StorageError"
   /v1/projects:
     get:
       tags: [Projects]
@@ -115,6 +263,55 @@ paths:
           $ref: "#/components/responses/MethodNotAllowed"
         "500":
           $ref: "#/components/responses/StorageError"
+  /v1/projects/{projectKey}/audit:
+    get:
+      tags: [Audit]
+      summary: List project audit events
+      operationId: listProjectAudit
+      description: |
+        Newest first. Optional flag and environment filters. limit defaults
+        to 50 and caps at 200. Readers may call this route.
+      parameters:
+        - $ref: "#/components/parameters/ProjectKey"
+        - name: flag
+          in: query
+          required: false
+          schema:
+            $ref: "#/components/schemas/PublicKey"
+          description: Restrict to this flag_key.
+        - name: environment
+          in: query
+          required: false
+          schema:
+            $ref: "#/components/schemas/PublicKey"
+          description: Restrict to this environment_key.
+        - name: limit
+          in: query
+          required: false
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 200
+            default: 50
+      responses:
+        "200":
+          description: Audit events for the project. Secrets and passwords are absent.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AuditPage"
+        "400":
+          $ref: "#/components/responses/ValidationError"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "405":
+          $ref: "#/components/responses/MethodNotAllowed"
+        "500":
+          $ref: "#/components/responses/StorageError"
   /v1/projects/{projectKey}/environments:
     get:
       tags: [Environments]
@@ -158,7 +355,7 @@ paths:
         content:
           application/json:
             schema:
-              $ref: "#/components/schemas/NamedCreate"
+              $ref: "#/components/schemas/EnvironmentCreate"
       responses:
         "201":
           description: The stored environment. The SDK secret is not included.
@@ -178,6 +375,43 @@ paths:
           $ref: "#/components/responses/MethodNotAllowed"
         "409":
           $ref: "#/components/responses/Conflict"
+        "500":
+          $ref: "#/components/responses/StorageError"
+  /v1/projects/{projectKey}/environments/{environmentKey}:
+    patch:
+      tags: [Environments]
+      summary: Patch an environment
+      operationId: patchEnvironment
+      description: |
+        Updates name and/or protected. The environment key cannot be changed.
+        Changing protected later requires writer and protected_writer; opaque
+        management tokens already have full access.
+      parameters:
+        - $ref: "#/components/parameters/ProjectKey"
+        - $ref: "#/components/parameters/EnvironmentKey"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/EnvironmentPatch"
+      responses:
+        "200":
+          description: The stored environment after the patch.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Environment"
+        "400":
+          $ref: "#/components/responses/ValidationError"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "405":
+          $ref: "#/components/responses/MethodNotAllowed"
         "500":
           $ref: "#/components/responses/StorageError"
   /v1/projects/{projectKey}/flags:
@@ -756,8 +990,19 @@ components:
     bearerAuth:
       type: http
       scheme: bearer
-      description: Opaque management token or SDK token. A JWT is not accepted. An SDK token receives 403 on management routes.
+      description: |
+        Opaque management token, SDK token, or local user JWT. An SDK token
+        receives 403 on management routes. A user JWT needs reader or writer
+        for management routes and cannot call evaluate.
   parameters:
+    UserId:
+      name: userId
+      in: path
+      required: true
+      schema:
+        type: string
+        pattern: "^[1-9][0-9]*$"
+      description: Decimal users.id.
     ProjectKey:
       name: projectKey
       in: path
@@ -958,15 +1203,172 @@ components:
           type: string
           nullable: true
           description: Null when this page is the last one.
+    AuditActor:
+      type: object
+      required: [id, kind]
+      additionalProperties: false
+      properties:
+        id:
+          type: integer
+          minimum: 1
+        kind:
+          type: string
+          enum: [management, sdk, user]
+    AuditEvent:
+      type: object
+      required:
+        - id
+        - at
+        - actor
+        - action
+        - flag_key
+        - environment_key
+        - before
+        - after
+      additionalProperties: false
+      properties:
+        id:
+          type: integer
+          minimum: 1
+        at:
+          type: string
+        actor:
+          $ref: "#/components/schemas/AuditActor"
+        action:
+          type: string
+        flag_key:
+          type: string
+          nullable: true
+        environment_key:
+          type: string
+          nullable: true
+        before:
+          nullable: true
+          description: Parsed JSON document, or null.
+        after:
+          nullable: true
+          description: Parsed JSON document, or null.
+    AuditPage:
+      type: object
+      required: [items]
+      additionalProperties: false
+      properties:
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/AuditEvent"
+    LoginRequest:
+      type: object
+      required: [email, password]
+      additionalProperties: false
+      properties:
+        email:
+          type: string
+          format: email
+        password:
+          type: string
+          minLength: 8
+          maxLength: 1024
+    AccessToken:
+      type: object
+      required: [access_token, token_type, expires_in]
+      additionalProperties: false
+      properties:
+        access_token:
+          type: string
+        token_type:
+          type: string
+          enum: [bearer]
+        expires_in:
+          type: integer
+          minimum: 1
+    UserRole:
+      type: string
+      enum: [reader, writer, protected_writer]
+    User:
+      type: object
+      required: [id, email, name, roles, created_at, disabled_at]
+      additionalProperties: false
+      properties:
+        id:
+          type: integer
+          minimum: 1
+        email:
+          type: string
+          format: email
+        name:
+          $ref: "#/components/schemas/DisplayName"
+        roles:
+          type: array
+          minItems: 1
+          items:
+            $ref: "#/components/schemas/UserRole"
+        created_at:
+          type: string
+        disabled_at:
+          type: string
+          nullable: true
+    UserPage:
+      type: object
+      required: [items, next_cursor]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/User"
+        next_cursor:
+          type: string
+          nullable: true
+    UserCreate:
+      type: object
+      required: [email, name, roles]
+      additionalProperties: false
+      properties:
+        email:
+          type: string
+          format: email
+        name:
+          $ref: "#/components/schemas/DisplayName"
+        password:
+          type: string
+          minLength: 8
+          maxLength: 1024
+          description: Omit for an IdP-only user.
+        roles:
+          type: array
+          minItems: 1
+          items:
+            $ref: "#/components/schemas/UserRole"
+    UserPatch:
+      type: object
+      minProperties: 1
+      additionalProperties: false
+      properties:
+        name:
+          $ref: "#/components/schemas/DisplayName"
+        password:
+          type: string
+          minLength: 8
+          maxLength: 1024
+        roles:
+          type: array
+          minItems: 1
+          items:
+            $ref: "#/components/schemas/UserRole"
+        disabled:
+          type: boolean
     Environment:
       type: object
-      required: [key, name]
+      required: [key, name, protected]
       additionalProperties: false
       properties:
         key:
           $ref: "#/components/schemas/PublicKey"
         name:
           $ref: "#/components/schemas/DisplayName"
+        protected:
+          type: boolean
+          description: When true, writes need writer and protected_writer.
     EnvironmentPage:
       type: object
       required: [items, next_cursor]
@@ -978,6 +1380,28 @@ components:
         next_cursor:
           type: string
           nullable: true
+    EnvironmentCreate:
+      type: object
+      required: [key, name]
+      additionalProperties: false
+      properties:
+        key:
+          $ref: "#/components/schemas/PublicKey"
+        name:
+          $ref: "#/components/schemas/DisplayName"
+        protected:
+          type: boolean
+          default: false
+          description: Omitting this field stores false.
+    EnvironmentPatch:
+      type: object
+      minProperties: 1
+      additionalProperties: false
+      properties:
+        name:
+          $ref: "#/components/schemas/DisplayName"
+        protected:
+          type: boolean
     NamedCreate:
       type: object
       required: [key, name]

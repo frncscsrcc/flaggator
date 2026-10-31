@@ -1,6 +1,6 @@
 # Decisions
 
-Every item in this document is accepted. A1–A9 come from the project brief. P1–P12 were the design proposals and were accepted when v1 implementation started. Their identifiers stay P1–P12 so the other documents keep their links.
+Every item in this document is accepted. A1–A9 come from the project brief. P1–P12 were accepted when v1 implementation started. P13–P14 are accepted for the users, roles, and JWT milestone. Identifiers stay stable so the other documents keep their links.
 
 ## Accepted
 
@@ -83,9 +83,9 @@ Projects, environments, flags, variations, and per-environment config headers ar
 
 A repository function does not commit or roll back. The service opens the transaction, calls one or more repository functions with that connection, and commits on success.
 
-### P8. Two credential kinds
+### P8. Credential kinds
 
-An **SDK token** is bound to one environment and may evaluate and read that environment's configuration. A **management token** may mutate. v1 has no user accounts: an operator is whoever holds a management token. Detail in [Security](security.md).
+An **SDK token** is bound to one environment and may evaluate and read that environment's configuration. An opaque **management token** may do everything on the management and evaluation planes; it is break-glass / bootstrap / automation, not the model for a person using a future UI. A **user** authenticates with a JWT and holds global roles (`reader`, `writer`, `protected_writer`). Detail in [Security](security.md) and [P14](#p14-users-roles-and-protected-environments).
 
 ### P9. One variation model
 
@@ -115,9 +115,11 @@ Explicitly later, so the design does not pretend they exist:
 - Segment clauses and a `segment_match` operator
 - Experiments and metrics
 - Approval workflows and scheduled changes
-- Accounts, SSO, and roles finer than the two credential kinds
 - Regex and semantic-version clause operators
-- Standard JWT authentication. v1 uses opaque bearer tokens. See [P13](#p13-standard-jwt-later).
+- Project-scoped membership (roles stay global; a later local allow-list may restrict which projects a user may touch without putting that list in an external IdP token)
+- Refresh tokens and browser OAuth code flows for a hosted UI
+
+Users, global roles, protected environments, and JWT authentication are [P13](#p13-jwt-authentication) and [P14](#p14-users-roles-and-protected-environments), not deferred.
 
 ### P11. Composition root, no container
 
@@ -133,8 +135,33 @@ The cache sits in the repository layer, in a wrapper next to the SQL, not inside
 
 Redis and Memcached are later implementations of the same protocol. `NullCache` ships with `MemoryCache`, because "no cache" is the off switch and the SQL test double.
 
-### P13. Standard JWT later
+### P13. JWT authentication
 
-v1 authenticates an opaque bearer token stored as a hash. A later version also accepts a standard JWT: a signed token with the usual issuer, audience, and expiry checks.
+**Status: implemented** for local issue/verify and external IdP JWKS verify.
 
-Both methods produce the same principal. Controllers and domain services receive that principal and do not parse the `Authorization` header. Adding JWT does not add a second authorization rule. JWT is not issued or verified in v1.
+The process accepts a standard JWT on the `Authorization: Bearer` header in addition to opaque management and SDK tokens. Opaque tokens stay hash lookups in `api_credentials`. A JWT is verified (signature, `iss`, `aud`, `exp`) and then mapped to the same principal shape the rest of the stack already uses.
+
+Two issuance / verify paths:
+
+- **Local:** `POST /v1/auth/login` with email and password returns an access JWT signed HS256 by flaggator (`FLAGGATOR_JWT_SECRET`). No refresh token in this milestone.
+- **External IdP:** `FLAGGATOR_JWT_JWKS_URL` plus issuer and audience. RS*/ES* tokens are verified against that JWKS. The IdP proves identity. **Roles come from the matching local user row** (by decimal `sub` or `email` claim), not from trusting the IdP to mint `protected_writer`. A JWT with no matching enabled local user is 401.
+
+Minimum claims on a locally issued token: `sub`, `roles`, `iss`, `aud`, `exp`, `iat`. Controllers and domain services receive a principal and do not parse the header. Signing and verification use **PyJWT** (MIT) with the `crypto` extra for JWKS ([Security](security.md) dependency policy). A static verifying key (without JWKS) is not implemented yet.
+
+### P14. Users, roles, and protected environments
+
+There is no multi-tenant mode inside one process. Users and roles apply to every project. Parallel deployments are how separate tenants are isolated.
+
+Roles (closed set):
+
+| Role | Meaning |
+| --- | --- |
+| `reader` | Management GETs: projects, environments, flags, targeting, audit. Does not evaluate. |
+| `writer` | Creates and mutates non-protected resources. Implies read. |
+| `protected_writer` | Add-on: with `writer`, may mutate environments marked `protected` and may change the `protected` flag itself. Alone, it does not grant write. |
+
+An opaque management token is treated as having every role. An SDK token has no management roles.
+
+Each environment has `protected` (default false). Promoting or clearing it requires `writer` and `protected_writer`. Writes that target a protected environment (targeting, SDK tokens for that environment, and similar) require the same pair.
+
+Authorization is hybrid: a coarse path gate rejects SDK tokens on management routes and rejects users without any management role; fine checks (`require_reader`, `require_writer`, `require_protected_write`) live in domain services next to the action, because only SQL knows whether an environment is protected. Detail and the route matrix are in [Security](security.md) and [API](api.md).

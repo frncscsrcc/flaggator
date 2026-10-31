@@ -163,7 +163,7 @@ class ProjectTests(unittest.TestCase):
         self.assertEqual(collection_status, "405 Method Not Allowed")
 
     def test_create_environment_audits_without_a_secret(self) -> None:
-        """An environment response is the key and the name, and the audit matches."""
+        """An environment response includes protected, and the audit matches."""
         self.call("POST", "/v1/projects", {"key": "shop", "name": "Shop"})
         status, body = self.call(
             "POST",
@@ -172,7 +172,7 @@ class ProjectTests(unittest.TestCase):
         )
         listed_status, listed = self.call("GET", "/v1/projects/shop/environments")
         self.assertEqual(status, "201 Created")
-        self.assertEqual(body, {"key": "prod", "name": "Production"})
+        self.assertEqual(body, {"key": "prod", "name": "Production", "protected": False})
         self.assertNotIn("secret", body)
         self.assertEqual(listed_status, "200 OK")
         self.assertEqual(listed["items"], [body])
@@ -182,7 +182,39 @@ class ProjectTests(unittest.TestCase):
         self.assertEqual(environment_audits[0]["project_key"], "shop")
         self.assertEqual(environment_audits[0]["environment_key"], "prod")
         self.assertIsNone(environment_audits[0]["flag_key"])
+        self.assertEqual(environment_audits[0]["after_json"], '{"key":"prod","name":"Production","protected":false}')
         self.assertNotIn(self.token, str(environment_audits[0]["after_json"]))
+
+    def test_create_and_patch_environment_protected(self) -> None:
+        """Create may set protected; PATCH updates name and protected."""
+        self.call("POST", "/v1/projects", {"key": "shop", "name": "Shop"})
+        create_status, created = self.call(
+            "POST",
+            "/v1/projects/shop/environments",
+            {"key": "prod", "name": "Production", "protected": True},
+        )
+        patch_status, patched = self.call(
+            "PATCH",
+            "/v1/projects/shop/environments/prod",
+            {"name": "Prod", "protected": False},
+        )
+        get_status, _get_body = self.call("GET", "/v1/projects/shop/environments/prod")
+        missing_status, missing = self.call(
+            "PATCH",
+            "/v1/projects/shop/environments/missing",
+            {"name": "Gone"},
+        )
+        self.assertEqual(create_status, "201 Created")
+        self.assertEqual(created, {"key": "prod", "name": "Production", "protected": True})
+        self.assertEqual(patch_status, "200 OK")
+        self.assertEqual(patched, {"key": "prod", "name": "Prod", "protected": False})
+        self.assertEqual(get_status, "405 Method Not Allowed")
+        self.assertEqual(missing_status, "404 Not Found")
+        self.assertEqual(missing["error"]["message"], "Environment does not exist.")
+        patch_audits = [row for row in self.audit_rows() if row["action"] == "environment.patch"]
+        self.assertEqual(len(patch_audits), 1)
+        self.assertEqual(patch_audits[0]["before_json"], '{"key":"prod","name":"Production","protected":true}')
+        self.assertEqual(patch_audits[0]["after_json"], '{"key":"prod","name":"Prod","protected":false}')
 
     def test_environment_key_is_unique_inside_one_project(self) -> None:
         """The same environment key is a conflict in one project and allowed in another."""
@@ -240,6 +272,42 @@ class ProjectTests(unittest.TestCase):
         self.assertEqual(shop_configs[0]["prerequisites_json"], "[]")
         self.assertEqual(shop_configs[0]["version"], 1)
         self.assertEqual(empty_configs, [])
+
+    def test_list_audit_is_newest_first_and_filterable(self) -> None:
+        """GET audit returns parsed documents, newest first, with filters."""
+        self.call("POST", "/v1/projects", {"key": "shop", "name": "Shop"})
+        self.call(
+            "POST",
+            "/v1/projects/shop/environments",
+            {"key": "prod", "name": "Production"},
+        )
+        self.call(
+            "POST",
+            "/v1/projects/shop/environments",
+            {"key": "dev", "name": "Development"},
+        )
+        status, body = self.call("GET", "/v1/projects/shop/audit")
+        filtered_status, filtered = self.call(
+            "GET",
+            "/v1/projects/shop/audit",
+            query="environment=prod&limit=10",
+        )
+        missing_status, missing = self.call("GET", "/v1/projects/missing/audit")
+        self.assertEqual(status, "200 OK")
+        self.assertEqual(len(body["items"]), 3)
+        self.assertEqual(body["items"][0]["action"], "environment.create")
+        self.assertEqual(body["items"][0]["environment_key"], "dev")
+        self.assertEqual(body["items"][0]["actor"]["kind"], "management")
+        self.assertEqual(
+            body["items"][0]["after"],
+            {"key": "dev", "name": "Development", "protected": False},
+        )
+        self.assertIsNone(body["items"][0]["before"])
+        self.assertEqual(body["items"][2]["action"], "project.create")
+        self.assertEqual(filtered_status, "200 OK")
+        self.assertEqual(len(filtered["items"]), 1)
+        self.assertEqual(filtered["items"][0]["environment_key"], "prod")
+        self.assertEqual(missing_status, "404 Not Found")
 
     def test_bad_cursor_is_rejected(self) -> None:
         """A cursor that is not a previous page is 400."""

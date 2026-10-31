@@ -5,7 +5,8 @@ does not parse tokens and does not execute SQL. Management routes receive
 the connection the adapter opened.
 """
 
-from api.environments import create_environment, list_environments
+from api.audit import list_audit
+from api.environments import create_environment, list_environments, patch_environment
 from api.evaluation import evaluate_all, evaluate_one, read_config
 from api.flags import create_flag, get_flag, list_flags, patch_flag
 from api.health import get_health
@@ -20,12 +21,21 @@ from api.segments import (
     replace_segment,
 )
 from api.targeting import get_targeting, replace_targeting
+from api.users import create_user, get_user, list_users, patch_user
 from domain.errors import Forbidden, StorageError
-from domain.models.principal import KIND_MANAGEMENT, KIND_SDK, Principal
+from domain.models.principal import (
+    KIND_MANAGEMENT,
+    KIND_SDK,
+    KIND_USER,
+    ROLE_READER,
+    ROLE_WRITER,
+    Principal,
+)
 from repositories.db import Connection
 from repositories.eval_cache import EvaluationCache
 
 _EVALUATION_PATHS = ("/v1/evaluate", "/v1/evaluate-all")
+_PUBLIC_PATHS = frozenset({"/health", "/v1/auth/login"})
 
 
 def dispatch(
@@ -36,10 +46,10 @@ def dispatch(
 ) -> Response:
     """Return the controller response for request.
 
-    GET /health needs no credential. A different method on that path is
-    405. Evaluation and management routes need the principal and the open
-    connection the adapter already authenticated. Any other path is 404.
-    Does not open a transaction and does not check the token.
+    GET /health needs no credential. Login is handled by the adapter
+    before this function. Evaluation and management routes need the
+    principal and the open connection. Any other path is 404. Does not
+    open a transaction and does not check the token.
     """
     if request.path == "/health":
         if request.method == "GET":
@@ -51,28 +61,35 @@ def dispatch(
 
 
 def requires_credential(request: Request) -> bool:
-    """Return False only for the health path.
+    """Return False for health and login.
 
-    POST /health is still the health path: the method check answers it
-    without a credential. Every other path needs a principal. Does not
-    read the database.
+    Other methods on those paths still reach the method check without a
+    credential. Every other path needs a principal. Does not read the
+    database.
     """
-    return request.path != "/health"
+    return request.path not in _PUBLIC_PATHS
 
 
 def authorize(request: Request, principal: Principal) -> None:
     """Raise Forbidden when principal may not reach this path.
 
-    A management token may continue, and the dispatcher then returns 404
-    for a path that has no controller yet. An SDK token may continue only
-    for evaluate, evaluate-all, and evaluation-config. Does not compare
-    the SDK token's environment with the request; that check belongs to the
-    evaluation service. Does not commit.
+    A management token may continue. An SDK token may continue only for
+    evaluate, evaluate-all, and evaluation-config. A user JWT may continue
+    on management paths when it has reader or writer; it cannot evaluate.
+    Fine role checks stay in the services. Does not commit.
     """
     if principal.kind == KIND_MANAGEMENT:
         return
-    if principal.kind == KIND_SDK and _sdk_may_read(request):
-        return
+    if principal.kind == KIND_SDK:
+        if _sdk_may_read(request):
+            return
+        raise Forbidden("The credential may not call this route.")
+    if principal.kind == KIND_USER:
+        if _sdk_may_read(request) or request.path in _EVALUATION_PATHS:
+            raise Forbidden("The credential may not call this route.")
+        if ROLE_READER in principal.roles or ROLE_WRITER in principal.roles:
+            return
+        raise Forbidden("The credential may not call this route.")
     raise Forbidden("The credential may not call this route.")
 
 
@@ -130,13 +147,21 @@ def _management_route(
     StorageError. Does not authenticate and does not commit.
     """
     parts = request.path.split("/")
-    if len(parts) < 3 or parts[0] != "" or parts[1] != "v1" or parts[2] != "projects":
+    if len(parts) < 3 or parts[0] != "" or parts[1] != "v1":
         return route_not_found()
     # The leading empty segment is the root slash. A later empty segment is
     # a trailing or doubled slash, which is not a route.
     if any(part == "" for part in parts[1:]):
         return route_not_found()
     session = _session(principal, connection)
+    if parts[2] == "users":
+        if len(parts) == 3:
+            return _users_collection(request, session[0], session[1])
+        if len(parts) == 4:
+            return _one_user(request, session[0], session[1], parts[3])
+        return route_not_found()
+    if parts[2] != "projects":
+        return route_not_found()
     if len(parts) == 3:
         return _projects_collection(request, session[0], session[1])
     project_key = parts[3]
@@ -148,6 +173,12 @@ def _management_route(
         return _environments_collection(request, session[0], session[1], project_key)
     if len(parts) == 5 and parts[4] == "flags":
         return _flags_collection(request, session[0], session[1], evaluation_cache, project_key)
+    if len(parts) == 5 and parts[4] == "audit":
+        if request.method != "GET":
+            return method_not_allowed("GET")
+        return list_audit(session[0], session[1], request, project_key)
+    if len(parts) == 6 and parts[4] == "environments":
+        return _one_environment(request, session[0], session[1], project_key, parts[5])
     if len(parts) == 6 and parts[4] == "flags":
         return _one_flag(request, session[0], session[1], evaluation_cache, project_key, parts[5])
     if len(parts) == 7 and parts[4] == "environments" and parts[6] == "segments":
@@ -204,6 +235,39 @@ def _projects_collection(
     return method_not_allowed("GET or POST")
 
 
+def _users_collection(
+    request: Request,
+    principal: Principal,
+    connection: Connection,
+) -> Response:
+    """Handle the users collection.
+
+    GET lists and POST creates. Any other method is 405. Does not commit.
+    """
+    if request.method == "GET":
+        return list_users(principal, connection, request)
+    if request.method == "POST":
+        return create_user(principal, connection, request)
+    return method_not_allowed("GET or POST")
+
+
+def _one_user(
+    request: Request,
+    principal: Principal,
+    connection: Connection,
+    user_id: str,
+) -> Response:
+    """Handle one user by id.
+
+    GET fetches and PATCH updates. Any other method is 405. Does not commit.
+    """
+    if request.method == "GET":
+        return get_user(principal, connection, user_id)
+    if request.method == "PATCH":
+        return patch_user(principal, connection, request, user_id)
+    return method_not_allowed("GET or PATCH")
+
+
 def _environments_collection(
     request: Request,
     principal: Principal,
@@ -219,6 +283,29 @@ def _environments_collection(
     if request.method == "POST":
         return create_environment(principal, connection, request, project_key)
     return method_not_allowed("GET or POST")
+
+
+def _one_environment(
+    request: Request,
+    principal: Principal,
+    connection: Connection,
+    project_key: str,
+    environment_key: str,
+) -> Response:
+    """Handle one environment under project_key.
+
+    PATCH updates name and/or protected. Any other method is 405. Does not
+    commit.
+    """
+    if request.method == "PATCH":
+        return patch_environment(
+            principal,
+            connection,
+            request,
+            project_key,
+            environment_key,
+        )
+    return method_not_allowed("PATCH")
 
 
 def _flags_collection(

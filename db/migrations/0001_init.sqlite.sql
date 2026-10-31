@@ -17,6 +17,7 @@ CREATE TABLE environments (
     project_id INTEGER NOT NULL,
     `key` TEXT NOT NULL,
     name TEXT NOT NULL,
+    protected INTEGER NOT NULL DEFAULT 0 CHECK (protected IN (0, 1)),
     CONSTRAINT uq_environments_project_key UNIQUE (project_id, `key`),
     CONSTRAINT fk_environments_project
         FOREIGN KEY (project_id) REFERENCES projects (id)
@@ -84,6 +85,17 @@ CREATE TABLE api_credentials (
     CONSTRAINT uq_api_credentials_secret_hash UNIQUE (secret_hash),
     CONSTRAINT fk_api_credentials_environment
         FOREIGN KEY (environment_id) REFERENCES environments (id)
+);
+
+CREATE TABLE users (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    email TEXT NOT NULL,
+    name TEXT NOT NULL,
+    password_hash TEXT,
+    roles_json TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    disabled_at TEXT,
+    CONSTRAINT uq_users_email UNIQUE (email)
 );
 
 CREATE TABLE audit_events (

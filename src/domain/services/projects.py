@@ -9,7 +9,7 @@ import json
 from domain.errors import Conflict, ConstraintViolation, NotFound, ValidationError
 from domain.models.catalog import CreateNamed, KeysetQuery, Project, ProjectPage
 from domain.models.principal import Principal
-from domain.services.access import require_management
+from domain.services.access import require_reader, require_writer
 from domain.services.audit import record_change
 from domain.validation import is_public_key, require_display_name, require_page_limit, require_public_key
 from repositories.db import Connection
@@ -27,7 +27,7 @@ def create_project(
     and Conflict when the key already exists. The audit document is the key
     and the name. It does not contain a credential secret.
     """
-    require_management(principal)
+    require_writer(principal)
     key = require_public_key(command.key, "key")
     name = require_display_name(command.name, "name")
     with connection.transaction():
@@ -55,7 +55,7 @@ def get_project(connection: Connection, principal: Principal, project_key: str) 
     public key or no row matches, with the same message for both. Does not
     open a transaction.
     """
-    require_management(principal)
+    require_reader(principal)
     if not is_public_key(project_key):
         raise NotFound("Project does not exist.")
     row = find_project(connection, project_key)
@@ -75,7 +75,7 @@ def list_projects_page(
     cursor key. Reads one extra row to decide next_key. next_key is None
     when no further page exists. Does not open a transaction.
     """
-    require_management(principal)
+    require_reader(principal)
     checked = _checked_query(query)
     rows = list_projects(connection, checked.after_key, checked.limit + 1)
     return ProjectPage(items=_visible(rows, checked.limit), next_key=_next_key(rows, checked.limit))

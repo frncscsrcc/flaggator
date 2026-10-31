@@ -17,9 +17,11 @@ CREATE TABLE environments (
     project_id BIGINT NOT NULL,
     `key` VARCHAR(128) NOT NULL,
     name VARCHAR(256) NOT NULL,
+    protected TINYINT NOT NULL DEFAULT 0,
     CONSTRAINT uq_environments_project_key UNIQUE (project_id, `key`),
     CONSTRAINT fk_environments_project
-        FOREIGN KEY (project_id) REFERENCES projects (id)
+        FOREIGN KEY (project_id) REFERENCES projects (id),
+    CONSTRAINT ck_environments_protected CHECK (protected IN (0, 1))
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
 CREATE TABLE segments (
@@ -85,6 +87,17 @@ CREATE TABLE api_credentials (
     CONSTRAINT uq_api_credentials_secret_hash UNIQUE (secret_hash),
     CONSTRAINT fk_api_credentials_environment
         FOREIGN KEY (environment_id) REFERENCES environments (id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+CREATE TABLE users (
+    id BIGINT NOT NULL AUTO_INCREMENT PRIMARY KEY,
+    email VARCHAR(320) NOT NULL,
+    name VARCHAR(256) NOT NULL,
+    password_hash VARCHAR(512) NULL,
+    roles_json TEXT NOT NULL,
+    created_at VARCHAR(32) NOT NULL,
+    disabled_at VARCHAR(32) NULL,
+    CONSTRAINT uq_users_email UNIQUE (email)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
 CREATE TABLE audit_events (

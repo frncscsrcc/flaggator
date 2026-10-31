@@ -30,12 +30,24 @@ class SettingsTests(unittest.TestCase):
         self.assertEqual(settings.bind_port, 8080)
         self.assertEqual(settings.eval_ttl_seconds, 5)
         self.assertEqual(settings.mysql_password, "")
+        self.assertEqual(settings.jwt_secret, "")
+        self.assertEqual(settings.jwt_issuer, "flaggator")
+        self.assertEqual(settings.jwt_audience, "flaggator")
+        self.assertEqual(settings.jwt_ttl_seconds, 3600)
+        self.assertEqual(settings.jwt_jwks_url, "")
         self.assertNotIn("mysql_password", repr(settings))
+        self.assertNotIn("jwt_secret", repr(settings))
 
     def test_repr_hides_the_mysql_password(self) -> None:
         """A logged Settings value must not contain the database password."""
         settings = load_settings({"FLAGGATOR_MYSQL_PASSWORD": "secret-password"})
         self.assertNotIn("secret-password", repr(settings))
+
+    def test_repr_hides_the_jwt_secret(self) -> None:
+        """A logged Settings value must not contain the JWT signing secret."""
+        settings = load_settings({"FLAGGATOR_JWT_SECRET": "jwt-signing-secret"})
+        self.assertEqual(settings.jwt_secret, "jwt-signing-secret")
+        self.assertNotIn("jwt-signing-secret", repr(settings))
 
     def test_bad_port_is_a_validation_error(self) -> None:
         """A non-numeric bind port fails before a socket is opened."""

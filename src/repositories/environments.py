@@ -14,12 +14,13 @@ from repositories.db import Connection
 class EnvironmentRow:
     """An environment plus the id the next statement in this use case needs.
 
-    The id is not an API field. key and name match the environments columns.
+    The id is not an API field. key, name, and protected match the columns.
     """
 
     id: int
     key: str
     name: str
+    protected: bool
 
 
 def insert_environment(
@@ -27,20 +28,48 @@ def insert_environment(
     project_id: int,
     key: str,
     name: str,
+    protected: bool,
 ) -> int:
     """Insert one environment in project_id and return its new id.
 
     Raises ConstraintViolation when that project already has key. Does not
     commit, does not copy another environment, and does not write configs.
     """
+    protected_value = 0
+    if protected:
+        protected_value = 1
     cursor = connection.execute(
         """
-        INSERT INTO environments (project_id, `key`, name)
-        VALUES (?, ?, ?)
+        INSERT INTO environments (project_id, `key`, name, protected)
+        VALUES (?, ?, ?, ?)
         """,
-        (project_id, key, name),
+        (project_id, key, name, protected_value),
     )
     return cursor.last_insert_id
+
+
+def update_environment(
+    connection: Connection,
+    environment_id: int,
+    name: str,
+    protected: bool,
+) -> None:
+    """Replace the name and protected flag for environment_id.
+
+    Does not commit. The caller already checked that the row exists.
+    """
+    protected_value = 0
+    if protected:
+        protected_value = 1
+    connection.execute(
+        """
+        UPDATE environments
+           SET name = ?,
+               protected = ?
+         WHERE id = ?
+        """,
+        (name, protected_value, environment_id),
+    )
 
 
 def find_environment(
@@ -54,7 +83,7 @@ def find_environment(
     """
     row = connection.execute(
         """
-        SELECT id, `key`, name
+        SELECT id, `key`, name, protected
           FROM environments
          WHERE project_id = ? AND `key` = ?
         """,
@@ -62,7 +91,12 @@ def find_environment(
     ).fetchone()
     if row is None:
         return None
-    return EnvironmentRow(id=int(row["id"]), key=str(row["key"]), name=str(row["name"]))
+    return EnvironmentRow(
+        id=int(row["id"]),
+        key=str(row["key"]),
+        name=str(row["name"]),
+        protected=int(row["protected"]) == 1,
+    )
 
 
 @dataclass(frozen=True)
@@ -106,6 +140,23 @@ def find_environment_scope(
         environment_id=int(row["environment_id"]),
         environment_key=str(row["environment_key"]),
     )
+
+
+def has_protected_environment(connection: Connection, project_id: int) -> bool:
+    """Return True when project_id has at least one protected environment.
+
+    Does not commit.
+    """
+    row = connection.execute(
+        """
+        SELECT 1 AS present
+          FROM environments
+         WHERE project_id = ? AND protected = 1
+         LIMIT 1
+        """,
+        (project_id,),
+    ).fetchone()
+    return row is not None
 
 
 def list_environment_keys(connection: Connection, project_id: int) -> list[str]:
@@ -158,7 +209,7 @@ def list_environments(
     if after_key is None:
         rows = connection.execute(
             """
-            SELECT `key`, name
+            SELECT `key`, name, protected
               FROM environments
              WHERE project_id = ?
              ORDER BY `key`
@@ -169,7 +220,7 @@ def list_environments(
     else:
         rows = connection.execute(
             """
-            SELECT `key`, name
+            SELECT `key`, name, protected
               FROM environments
              WHERE project_id = ?
                AND `key` > ?
@@ -178,4 +229,11 @@ def list_environments(
             """,
             (project_id, after_key, limit),
         ).fetchall()
-    return [Environment(key=str(row["key"]), name=str(row["name"])) for row in rows]
+    return [
+        Environment(
+            key=str(row["key"]),
+            name=str(row["name"]),
+            protected=int(row["protected"]) == 1,
+        )
+        for row in rows
+    ]

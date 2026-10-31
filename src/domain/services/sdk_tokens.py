@@ -10,7 +10,7 @@ import secrets
 from domain.clock import utc_timestamp
 from domain.errors import Conflict, NotFound
 from domain.models.principal import KIND_SDK, Principal
-from domain.services.access import require_management
+from domain.services.access import require_protected_write
 from domain.services.audit import record_change
 from domain.validation import is_public_key, require_display_name
 from repositories.credentials import (
@@ -67,10 +67,10 @@ def issue_sdk_token(
     has that name in the environment. The audit document has the id, the
     name, and the prefix, not the secret. Does not print the secret.
     """
-    require_management(principal)
     label = require_display_name(name, "name")
     with connection.transaction():
         project, environment = _require_scope(connection, project_key, environment_key)
+        require_protected_write(principal, environment.protected)
         if find_active_sdk_token_by_name(connection, environment.id, label) is not None:
             raise Conflict("SDK token name already exists.")
         created_at = utc_timestamp()
@@ -115,8 +115,8 @@ def list_sdk_token_page(
     environment is absent. An environment with no tokens returns an empty
     list. Secrets are not loaded. Does not open a transaction.
     """
-    require_management(principal)
     _project, environment = _require_scope(connection, project_key, environment_key)
+    require_protected_write(principal, environment.protected)
     return list_sdk_tokens(connection, environment.id)
 
 
@@ -133,9 +133,9 @@ def revoke_sdk_token_now(
     environment, or the token is absent, including when the token is already
     revoked. The audit document does not contain a secret.
     """
-    require_management(principal)
     with connection.transaction():
         project, environment = _require_scope(connection, project_key, environment_key)
+        require_protected_write(principal, environment.protected)
         rows = list_sdk_tokens(connection, environment.id)
         name = ""
         prefix = ""

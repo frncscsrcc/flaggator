@@ -163,7 +163,8 @@ Logical types are what the application means. Each engine's migration renders th
 | Table | Purpose | Notable columns |
 | --- | --- | --- |
 | `projects` | Project identity | `key` unique, `name` |
-| `environments` | Environment inside a project | `project_id`, `key` unique per project, `name` |
+| `environments` | Environment inside a project | `project_id`, `key` unique per project, `name`, `protected` (0/1, default 0) |
+| `users` | Global operators | `email` unique, `name`, `password_hash` (null if passwordless/IdP-linked), `roles_json`, `created_at`, `disabled_at` |
 | `flags` | Flag identity inside a project | `project_id`, `key` unique per project, `name`, `description` |
 | `flag_variations` | Ordered values | `flag_id`, `variation_index` unique per flag, `value_json` |
 | `flag_configs` | One row per flag per environment | `flag_id`, `environment_id`, `enabled`, `off_variation`, `fallthrough_json`, `rules_json`, `targets_json`, `prerequisites_json`, `version` |

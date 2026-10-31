@@ -1,6 +1,7 @@
 .cursor/
 .venv/
 .html/
+.mock/
 
 __pycache__/
 .pytest_cache/

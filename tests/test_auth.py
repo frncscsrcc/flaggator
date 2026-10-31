@@ -15,12 +15,22 @@ if str(_SRC) not in sys.path:
 from api.http import Application
 from composition import bootstrap_management_token, load_settings
 from domain.clock import utc_timestamp
-from domain.models.principal import KIND_SDK
+from domain.jwt import encode_hs256
+from domain.models.principal import KIND_SDK, KIND_USER, MANAGEMENT_ROLES, ROLE_READER, ROLE_WRITER
 from domain.services.audit import record_change
-from domain.services.authentication import authenticate
+from domain.errors import Unauthenticated
+from domain.services.authentication import JwtSettings, authenticate
 from repositories.credentials import find_active_principal, hash_token, insert_credential
 from repositories.migrate import apply_migrations, default_migrations_directory
 from repositories.sqlite import SqliteDatabase
+
+_JWT_SECRET = "test-jwt-signing-secret-32b-min!!"
+_JWT = JwtSettings(
+    secret=_JWT_SECRET,
+    issuer="flaggator",
+    audience="flaggator",
+    ttl_seconds=3600,
+)
 
 
 def call(application: Application, method: str, path: str, authorization: str | None = None) -> tuple[str, dict]:
@@ -153,7 +163,7 @@ class AuthenticationTests(unittest.TestCase):
         )
         bootstrap_management_token(settings, secret_out, io.StringIO())
         self.management_token = secret_out.getvalue().strip()
-        self.application = Application(self.database)
+        self.application = Application(self.database, jwt_settings=_JWT)
 
     def tearDown(self) -> None:
         """Delete the temporary database file."""
@@ -183,8 +193,8 @@ class AuthenticationTests(unittest.TestCase):
         self.assertEqual(missing_body["error"]["code"], "unauthenticated")
         self.assertNotIn("revoked", missing_body["error"]["message"])
 
-    def test_a_jwt_shaped_header_is_not_accepted(self) -> None:
-        """v1 does not verify a JWT. The response is the same 401 as a bad token."""
+    def test_a_bad_jwt_is_the_same_401(self) -> None:
+        """A JWT-shaped token that fails verify is the same 401 as a bad opaque token."""
         status, body = call(
             self.application,
             "GET",
@@ -325,13 +335,102 @@ class AuthenticationTests(unittest.TestCase):
             connection.close()
 
     def test_authenticate_returns_the_principal_without_the_secret(self) -> None:
-        """The principal carries the prefix and not the token."""
+        """The principal carries the prefix, every management role, and not the token."""
         connection = self.database.connect()
         try:
-            principal = authenticate(connection, f"Bearer {self.management_token}")
+            principal = authenticate(
+                connection,
+                f"Bearer {self.management_token}",
+                _JWT,
+            )
         finally:
             connection.close()
         self.assertEqual(principal.kind, "management")
         self.assertIsNone(principal.environment_id)
         self.assertEqual(principal.prefix, self.management_token[:8])
+        self.assertEqual(principal.roles, MANAGEMENT_ROLES)
         self.assertNotIn(self.management_token, repr(principal))
+
+    def test_authenticate_jwt_loads_roles_from_the_user_row(self) -> None:
+        """A valid local JWT becomes a user principal; claim roles are ignored."""
+        user_id = self._insert_user(
+            "ops@example.com",
+            '["reader","writer"]',
+        )
+        token = encode_hs256(
+            {
+                "sub": str(user_id),
+                "roles": ["protected_writer"],
+                "iss": "flaggator",
+                "aud": "flaggator",
+                "iat": 1_700_000_000,
+                "exp": 2_000_000_000,
+            },
+            _JWT_SECRET,
+        )
+        connection = self.database.connect()
+        try:
+            principal = authenticate(connection, f"Bearer {token}", _JWT)
+            missing = self._insert_user("gone@example.com", '["reader"]', disabled=True)
+            disabled_token = encode_hs256(
+                {
+                    "sub": str(missing),
+                    "iss": "flaggator",
+                    "aud": "flaggator",
+                    "iat": 1_700_000_000,
+                    "exp": 2_000_000_000,
+                },
+                _JWT_SECRET,
+            )
+            with self.assertRaises(Unauthenticated):
+                authenticate(connection, f"Bearer {disabled_token}", _JWT)
+        finally:
+            connection.close()
+        self.assertEqual(principal.kind, KIND_USER)
+        self.assertEqual(principal.credential_id, user_id)
+        self.assertEqual(principal.roles, (ROLE_READER, ROLE_WRITER))
+        self.assertIsNone(principal.environment_id)
+        self.assertEqual(principal.prefix, "")
+        allowed_status, allowed = call(
+            self.application,
+            "GET",
+            "/v1/projects",
+            f"Bearer {token}",
+        )
+        evaluate_status, evaluate = call(
+            self.application,
+            "POST",
+            "/v1/evaluate",
+            f"Bearer {token}",
+        )
+        self.assertEqual(allowed_status, "200 OK")
+        self.assertEqual(allowed["items"], [])
+        self.assertEqual(evaluate_status, "403 Forbidden")
+        self.assertEqual(evaluate["error"]["code"], "forbidden")
+
+    def _insert_user(self, email: str, roles_json: str, disabled: bool = False) -> int:
+        """Insert one user row and return its id.
+
+        Commits. password_hash is null. disabled sets disabled_at when true.
+        """
+        connection = self.database.connect()
+        try:
+            with connection.transaction():
+                cursor = connection.execute(
+                    """
+                    INSERT INTO users (
+                        email, name, password_hash, roles_json, created_at, disabled_at
+                    ) VALUES (?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        email,
+                        "Operator",
+                        None,
+                        roles_json,
+                        utc_timestamp(),
+                        utc_timestamp() if disabled else None,
+                    ),
+                )
+                return cursor.last_insert_id
+        finally:
+            connection.close()

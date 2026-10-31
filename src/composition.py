@@ -16,6 +16,7 @@ from cache.memory import MemoryCache
 from cache.null import NullCache
 from cache.protocol import Cache
 from domain.errors import ValidationError
+from domain.services.authentication import JwtSettings
 from domain.validation import DEFAULT_EVAL_TTL_SECONDS
 from repositories.db import Database
 from repositories.eval_cache import EvaluationCache
@@ -26,8 +27,9 @@ from repositories.migrate import apply_migrations, default_migrations_directory
 class Settings:
     """Configuration for one process.
 
-    mysql_password is a secret. __repr__ leaves it out so a log of this
-    object does not record it. Building Settings does not open a connection.
+    mysql_password and jwt_secret are secrets. __repr__ leaves them out so a
+    log of this object does not record them. Building Settings does not open
+    a connection. JWT fields are loaded here; issue and verify land later.
     """
 
     engine: str
@@ -41,17 +43,24 @@ class Settings:
     bind_host: str
     bind_port: int
     eval_ttl_seconds: int
+    jwt_secret: str
+    jwt_issuer: str
+    jwt_audience: str
+    jwt_ttl_seconds: int
+    jwt_jwks_url: str
     migrations_directory: Path
 
     def __repr__(self) -> str:
-        """Describe the process settings without the database password."""
+        """Describe the process settings without secret values."""
         return (
             "Settings("
             f"engine={self.engine!r}, sqlite_path={self.sqlite_path!r}, "
             f"mysql_host={self.mysql_host!r}, mysql_port={self.mysql_port!r}, "
             f"mysql_database={self.mysql_database!r}, mysql_user={self.mysql_user!r}, "
             f"cache={self.cache!r}, bind_host={self.bind_host!r}, "
-            f"bind_port={self.bind_port!r}, eval_ttl_seconds={self.eval_ttl_seconds!r})"
+            f"bind_port={self.bind_port!r}, eval_ttl_seconds={self.eval_ttl_seconds!r}, "
+            f"jwt_issuer={self.jwt_issuer!r}, jwt_audience={self.jwt_audience!r}, "
+            f"jwt_ttl_seconds={self.jwt_ttl_seconds!r}, jwt_jwks_url={self.jwt_jwks_url!r})"
         )
 
 
@@ -75,9 +84,9 @@ def load_settings(environment: Mapping[str, str] | None = None) -> Settings:
     When environment is omitted, os.environ is used. Names start with
     FLAGGATOR_, for example FLAGGATOR_ENGINE and FLAGGATOR_SQLITE_PATH.
     SQLite, the memory cache, and 127.0.0.1 are the defaults. The MySQL
-    password is copied onto Settings and is not logged here. Raises
-    ValidationError when the port is not an integer. Does not open a
-    connection.
+    password and JWT signing secret are copied onto Settings and are not
+    logged here. Raises ValidationError when a port or TTL is not an
+    integer. Does not open a connection.
     """
     source = os.environ if environment is None else environment
     return Settings(
@@ -95,6 +104,14 @@ def load_settings(environment: Mapping[str, str] | None = None) -> Settings:
             source.get("FLAGGATOR_EVAL_TTL_SECONDS", str(DEFAULT_EVAL_TTL_SECONDS)),
             "eval_ttl_seconds",
         ),
+        jwt_secret=source.get("FLAGGATOR_JWT_SECRET", ""),
+        jwt_issuer=source.get("FLAGGATOR_JWT_ISSUER", "flaggator"),
+        jwt_audience=source.get("FLAGGATOR_JWT_AUDIENCE", "flaggator"),
+        jwt_ttl_seconds=_positive_int(
+            source.get("FLAGGATOR_JWT_TTL_SECONDS", "3600"),
+            "jwt_ttl_seconds",
+        ),
+        jwt_jwks_url=source.get("FLAGGATOR_JWT_JWKS_URL", ""),
         migrations_directory=default_migrations_directory(),
     )
 
@@ -156,6 +173,13 @@ def prepare(settings: Settings) -> Runtime:
         application=Application(
             database,
             EvaluationCache(cache, settings.eval_ttl_seconds),
+            JwtSettings(
+                secret=settings.jwt_secret,
+                issuer=settings.jwt_issuer,
+                audience=settings.jwt_audience,
+                ttl_seconds=settings.jwt_ttl_seconds,
+                jwks_url=settings.jwt_jwks_url,
+            ),
         ),
     )
 

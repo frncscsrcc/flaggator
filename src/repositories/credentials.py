@@ -9,7 +9,7 @@ import hmac
 from collections.abc import Mapping
 from dataclasses import dataclass
 
-from domain.models.principal import KIND_SDK, Principal
+from domain.models.principal import KIND_MANAGEMENT, KIND_SDK, MANAGEMENT_ROLES, Principal
 from repositories.db import Connection
 
 PREFIX_LENGTH = 8
@@ -86,11 +86,17 @@ def find_active_principal(connection: Connection, token: str) -> Principal | Non
         scoped_environment = None
     else:
         scoped_environment = int(environment_id)
+    kind = str(row["kind"])
+    if kind == KIND_MANAGEMENT:
+        roles = MANAGEMENT_ROLES
+    else:
+        roles = ()
     return Principal(
         credential_id=int(row["id"]),
-        kind=str(row["kind"]),
+        kind=kind,
         environment_id=scoped_environment,
         prefix=str(row["prefix"]),
+        roles=roles,
     )
 
 

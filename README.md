@@ -11,8 +11,8 @@ The domain will feel familiar to anyone who has used a hosted feature-flag produ
 1. **API first.** Behavior is defined as a versioned HTTP API. A user interface, if one is ever added, is a client of that API.
 2. **Thin controllers.** A handler parses a request, calls one domain service, and writes the response. Business rules live in domain services.
 3. **Explicit SQL.** Repository functions send SQL text and bind values through the DB-API. Rows are mapped into dataclass DTOs. The project does not use an ORM.
-4. **Standard library first.** HTTP, JSON, hashing, and the default database driver (SQLite) come from the Python standard library. MySQL is selected in configuration and pulls in one optional driver. Any other third-party package needs a written reason.
-5. **Secure by construction.** Credentials are scoped and stored as hashes. Mutations are audited. Flag rules are data, interpreted by the evaluator. SQL values are bound parameters.
+4. **Standard library first.** HTTP, JSON, hashing, and the default database driver (SQLite) come from the Python standard library. JWT uses **PyJWT** (with the `crypto` extra for IdP JWKS). MySQL is an optional extra. Any other third-party package needs a written reason ([Security](docs/security.md)).
+5. **Secure by construction.** Credentials are scoped and stored as hashes. Mutations are audited. Flag rules are data, interpreted by the evaluator. SQL values are bound parameters. Operators use JWT users; the opaque management token is break-glass.
 
 ## Layout
 
@@ -45,24 +45,42 @@ Dependency direction is one way: `api` → `domain services` → `repositories`.
 
 ## Run
 
-From the repository, with the virtual environment already activated:
+From the repository, with the virtual environment already activated and dependencies installed (`pip install -e .` so PyJWT is available):
 
 ```bash
 source .venv/bin/activate
+export FLAGGATOR_JWT_SECRET="$(python -c 'import secrets; print(secrets.token_urlsafe(32))')"
 python -m main bootstrap
 ```
 
-Bootstrap creates `flaggator.db` when it is missing, applies migrations, and prints a management token once. The notice on stderr does not contain the token. Save the token, then start the process in another terminal:
+Bootstrap creates `flaggator.db` when it is missing, applies migrations, and prints a **management token** once. The notice on stderr does not contain the token. Save it: it is break-glass / bootstrap only. Day-to-day operators should use a **user JWT**.
+
+If you already have a database from before the `users` table and `environments.protected` column, delete `flaggator.db` (and any `-wal` / `-shm` siblings) and run bootstrap again. There is no in-place migration for that schema change.
 
 ```bash
 python -m main
 ```
 
-The process listens on `127.0.0.1:8080`. `FLAGGATOR_BIND_HOST`, `FLAGGATOR_BIND_PORT`, and `FLAGGATOR_SQLITE_PATH` change the address and the database file. Put the printed token in `TOKEN` before the examples:
+The process listens on `127.0.0.1:8080`. `FLAGGATOR_BIND_HOST`, `FLAGGATOR_BIND_PORT`, and `FLAGGATOR_SQLITE_PATH` change the address and the database file.
+
+### First user and login
 
 ```bash
-export TOKEN=the-printed-token
+export TOKEN=the-printed-management-token
+
+curl -s -X POST http://127.0.0.1:8080/v1/users \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"email":"ops@example.com","name":"Ops","password":"password1","roles":["reader","writer","protected_writer"]}'
+
+curl -s -X POST http://127.0.0.1:8080/v1/auth/login \
+  -H "Content-Type: application/json" \
+  -d '{"email":"ops@example.com","password":"password1"}'
 ```
+
+Put the login `access_token` in `TOKEN` for management calls (projects, flags, audit). Login needs `FLAGGATOR_JWT_SECRET` (at least 32 bytes). Optional IdP: set `FLAGGATOR_JWT_JWKS_URL`, `FLAGGATOR_JWT_ISSUER`, and `FLAGGATOR_JWT_AUDIENCE`, pre-create the user with the IdP email (password may be omitted), then send the IdP Bearer token. Detail in [Security](docs/security.md).
+
+### Project, environment, flag
 
 Create a project, an environment, and a flag:
 

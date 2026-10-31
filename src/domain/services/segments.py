@@ -9,7 +9,7 @@ from domain.errors import Conflict, ConstraintViolation, NotFound, ValidationErr
 from domain.models.catalog import KeysetQuery
 from domain.models.principal import Principal
 from domain.models.segment import CreateSegment, ReplaceSegment, Segment, SegmentPage
-from domain.services.access import require_management
+from domain.services.access import require_protected_write, require_reader
 from domain.services.audit import record_change
 from domain.validation import (
     MAX_CONTEXT_STRING_LENGTH,
@@ -49,7 +49,6 @@ def create_segment(
     list, and Conflict when this environment already has the key. The audit
     document has the public fields only.
     """
-    require_management(principal)
     _known_scope(project_key, environment_key)
     key = require_public_key(command.key, "key")
     name = require_display_name(command.name, "name")
@@ -57,6 +56,7 @@ def create_segment(
     segment = Segment(key=key, name=name, subjects=subjects)
     with connection.transaction():
         project, environment = _require_scope(connection, project_key, environment_key)
+        require_protected_write(principal, environment.protected)
         try:
             insert_segment(connection, environment.id, key, name, subjects)
         except ConstraintViolation as exc:
@@ -87,7 +87,7 @@ def list_segments_page(
     environment is absent, and ValidationError for a bad limit or cursor.
     next_key is None when no further page exists.
     """
-    require_management(principal)
+    require_reader(principal)
     _known_scope(project_key, environment_key)
     checked = _checked_query(query)
     with connection.transaction():
@@ -114,7 +114,7 @@ def get_segment(
     environment, or the segment is absent, including when a key cannot
     exist. Does not open a transaction.
     """
-    require_management(principal)
+    require_reader(principal)
     _known_scope(project_key, environment_key)
     if not is_public_key(segment_key):
         raise NotFound("Segment does not exist.")
@@ -140,7 +140,6 @@ def replace_segment(
     when the project, environment, or segment is absent, and ValidationError
     for a bad name or subject list. The cache delete runs after commit.
     """
-    require_management(principal)
     _known_scope(project_key, environment_key)
     if not is_public_key(segment_key):
         raise NotFound("Segment does not exist.")
@@ -149,6 +148,7 @@ def replace_segment(
     segment = Segment(key=segment_key, name=name, subjects=subjects)
     with connection.transaction():
         project, environment = _require_scope(connection, project_key, environment_key)
+        require_protected_write(principal, environment.protected)
         current = find_segment(connection, environment.id, segment_key)
         if current is None:
             raise NotFound("Segment does not exist.")
@@ -183,12 +183,12 @@ def delete_segment_now(
     cites the key. Does not drop the evaluation bundle: a cited segment is
     not deleted, and an uncited one is not part of a decision.
     """
-    require_management(principal)
     _known_scope(project_key, environment_key)
     if not is_public_key(segment_key):
         raise NotFound("Segment does not exist.")
     with connection.transaction():
         project, environment = _require_scope(connection, project_key, environment_key)
+        require_protected_write(principal, environment.protected)
         current = find_segment(connection, environment.id, segment_key)
         if current is None:
             raise NotFound("Segment does not exist.")

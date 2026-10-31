@@ -1,14 +1,15 @@
 # Security
 
-flaggator stores decisions that change production behavior, and it stores credentials that can read or change those decisions. This document states the v1 threat assumptions and the controls that follow from them. Proposals [P4](decisions.md) and [P8](decisions.md) apply.
+flaggator stores decisions that change production behavior, and it stores credentials that can read or change those decisions. This document states the threat assumptions and the controls that follow from them. [P4](decisions.md), [P8](decisions.md), [P13](decisions.md), and [P14](decisions.md) apply.
 
 ## Assumptions
 
-- v1 is one process on a machine the operator controls. The database is a SQLite file or a MySQL schema the operator points at.
+- The service is one process on a machine the operator controls. The database is a SQLite file or a MySQL schema the operator points at.
 - The default bind is `127.0.0.1` and a non-privileged port. The process does not terminate TLS.
 - A deployment that is reachable beyond loopback is expected to sit behind a reverse proxy that terminates TLS. Plain HTTP off-loopback is outside the supported setup.
-- Whoever can read or write the database can read flag configuration, salts, audit history, and credential hashes, and can change flags outside the audit log.
-- There are no user accounts in v1. Holding a management token is the operator role.
+- Whoever can read or write the database can read flag configuration, salts, audit history, credential hashes, and user password hashes, and can change flags outside the audit log.
+- One deployment is one tenant. Users and roles are global across projects. Separate organizations run separate processes.
+- People use JWT-backed users. The opaque management token is break-glass, not the UI identity.
 
 These assumptions are local-deploy assumptions. They are not a reason to skip hashing, scoping, or audit.
 
@@ -19,23 +20,26 @@ These assumptions are local-deploy assumptions. They are not a reason to skip ha
 | Targeting configuration | Turning a flag on or rewriting a rule changes application behavior. |
 | Evaluation results | They reveal which variation a context receives. Combined with a guessed subject they can disclose a rollout assignment. |
 | Salts and full rule trees | They let a holder recompute buckets for every subject. Served only to credentials of that environment. |
-| Credential secrets | A management token edits every project. An SDK token reads and evaluates one environment. |
-| Audit log | The record of who changed targeting. |
+| Credential secrets | An opaque management token edits every project and can evaluate. An SDK token reads and evaluates one environment. A user password or JWT signing key issues management access. |
+| Audit log | The record of who changed targeting and related management writes. |
 | Context attributes | Callers may send identifiers and personal data. The server needs them to evaluate and does not need to store them. |
 
 ## Credentials
 
-Two kinds ([P8](decisions.md)):
+Kinds ([P8](decisions.md)):
 
 | Kind | Bound to | May do |
 | --- | --- | --- |
-| Management token | The whole server in v1 | Management routes, audit reads, and evaluation |
+| Opaque management token | The whole server | Every management and evaluation route. Break-glass / bootstrap / automation. Not a person in a UI. |
+| User (JWT) | The whole server, limited by roles | Management routes allowed by `reader` / `writer` / `protected_writer`. Does not call evaluate or evaluation-config. |
 | SDK token | One environment | Evaluate and read evaluation config for that environment only |
+
+### Opaque tokens (management and SDK)
 
 Issuance:
 
 - The service generates the secret with `secrets.token_urlsafe` (standard library).
-- It stores only a hash and a short non-secret prefix so operators can tell keys apart in a list.
+- It stores only a hash and a short non-secret prefix so operators can tell keys apart in a list. SDK tokens also store a mnemonic `name`.
 - Hash is SHA-256 of the secret. The secret is high-entropy (at least 256 bits from `secrets`), so a salted password hash is not required for these tokens. The hash is still not reversible.
 - The plaintext secret is returned once, in the create response, and is not written to the audit log.
 - Revocation sets `revoked_at`. Lookup treats a revoked row as unknown and the API returns 401.
@@ -43,22 +47,62 @@ Issuance:
 
 Lookup uses a bound parameter on the hash. The token from the header is never concatenated into SQL and never logged.
 
-Management tokens are created by a local bootstrap command, `python -m main bootstrap`. It prints the secret once. They are not seeded as a fixed default password.
+Opaque management tokens are created by `python -m main bootstrap`. It prints the secret once. Use it to create the first user, for recovery when login is broken, and for non-interactive automation. Prefer JWT users for day-to-day operators.
 
-## JWT later
+### Users and passwords
 
-Opaque tokens are the v1 credential ([P13](decisions.md)). A later authentication method accepts a standard JWT and builds the same principal the opaque token already produces: credential kind and scope, without the secret. Controllers stay on that principal. v1 does not sign or verify JWTs, and a JWT presented to this version is an unknown credential.
+- A user has email (unique), display name, optional password hash, roles, and optional `disabled_at`.
+- Password hashes use a slow KDF (stdlib `hashlib.scrypt` preferred). They are never returned by the API or written to audit `before`/`after` documents.
+- Local login is `POST /v1/auth/login` with email and password; the response is an access JWT only.
 
-## Authorization
+### JWT ([P13](decisions.md))
 
-Authentication attaches a principal before the controller runs. The service then enforces:
+- Locally issued tokens are signed with `FLAGGATOR_JWT_SECRET` (use at least 32 bytes for HS256). Issuer, audience, and lifetime come from `FLAGGATOR_JWT_ISSUER`, `FLAGGATOR_JWT_AUDIENCE`, and `FLAGGATOR_JWT_TTL_SECONDS` (default 3600).
+- An external IdP is configured with `FLAGGATOR_JWT_JWKS_URL` plus the same `FLAGGATOR_JWT_ISSUER` / `FLAGGATOR_JWT_AUDIENCE` used for claim checks. Tokens whose header `alg` is RS* or ES* are verified against that JWKS. Verification checks signature, `iss`, `aud`, and `exp`.
+- After verification, flaggator loads the local user that matches a decimal `sub` (local user id) or the `email` claim (normalized). Roles come from that row. No matching enabled user → 401. The IdP is not trusted to invent `protected_writer`.
+- Controllers never parse the bearer header; authentication builds a principal that carries kind, roles, and audit actor id.
 
-- SDK token on a management route → `Forbidden`
+## Roles and protected environments ([P14](decisions.md))
+
+| Role | Grants |
+| --- | --- |
+| `reader` | GET projects, environments, flags, targeting, audit |
+| `writer` | All `reader` rights, plus create/mutate on non-protected environments and project-level resources that do not target a protected environment |
+| `protected_writer` | Add-on only: together with `writer`, mutate protected environments and change the `protected` flag |
+
+An opaque management token is authorized as if it held every role. An SDK token has none of these roles.
+
+Each environment has `protected` (default false). Changing `protected`, or writing targeting / SDK tokens / similar for a protected environment, requires `writer` and `protected_writer`.
+
+### Authorization matrix (management plane)
+
+| Family | reader | writer | writer + protected_writer | opaque management | SDK |
+| --- | --- | --- | --- | --- | --- |
+| Health | yes (no auth) | yes | yes | yes | yes |
+| Projects / environments GET | yes | yes | yes | yes | no |
+| Projects / environments write, `protected` toggle | no | non-protected only | yes | yes | no |
+| Flags GET, targeting GET | yes | yes | yes | yes | no |
+| Flags / targeting mutate | no | non-protected env only | yes | yes | no |
+| SDK token manage | no | non-protected env only | yes | yes | no |
+| Users manage | no | yes | yes | yes | no |
+| Audit GET | yes | yes | yes | yes | no |
+| Evaluate / evaluate-all / evaluation-config | no | no | no | yes | own env |
+
+“Non-protected only” means: if the target environment has `protected=true`, the caller also needs `protected_writer`.
+
+## Authorization placement
+
+Authentication attaches a principal before the controller runs.
+
+**Coarse gate** (route authorize): SDK tokens may continue only on evaluation paths; user JWTs need at least `reader` or `writer` for management paths; opaque management tokens may continue.
+
+**Fine checks** (domain services): `require_reader`, `require_writer`, and `require_protected_write(environment)` read `principal.roles` and, when needed, `environment.protected` from SQL. The controller does not load whether an environment is protected. Controllers do not call repositories ([Architecture](architecture.md)).
+
+Other rules:
+
 - SDK token whose environment is not the target of the read or evaluation → `Forbidden`
-- Management token on a management route → allowed in v1
-- Revoked or missing credential → `Unauthenticated`, which the API renders as 401
-
-Authorization checks sit in the service that performs the action, next to the action, so a new endpoint cannot forget them by calling a repository directly. Controllers do not call repositories ([Architecture](architecture.md)).
+- Revoked, disabled, or missing credential → `Unauthenticated` (401)
+- Valid credential lacking the role for this action → `Forbidden` (403)
 
 ## SQL injection
 
@@ -126,8 +170,10 @@ Exceeding a limit is `ValidationError` (400), not a truncated write.
 
 ## Dependency policy
 
-The default install uses the standard library only: `sqlite3`, `http.server` or `wsgiref`, `json`, `hashlib`, `hmac`, `secrets`, `dataclasses`.
+The default install uses the standard library plus JWT libraries: `sqlite3`, `http.server` or `wsgiref`, `json`, `hashlib`, `hmac`, `secrets`, `dataclasses`, **PyJWT** (MIT), and **cryptography** (via `PyJWT[crypto]`; Apache-2.0 / BSD).
 
-MySQL adds PyMySQL as an optional extra ([P3](decisions.md)). It is imported only by the MySQL database module. The reason: the standard library has no MySQL driver.
+**PyJWT** signs local HS256 tokens and verifies HS256 or IdP JWKS tokens (`domain/jwt.py`). The `crypto` extra pulls in **cryptography** so RS*/ES* JWKS verification works. Reason: prefer a known JWT stack over hand-rolled serialization and key handling. Licenses are MIT-compatible with flaggator.
+
+MySQL adds PyMySQL as an optional extra ([P3](decisions.md)). It is imported only by the MySQL database module. The reason: the standard library has no MySQL driver. License: MIT.
 
 No ORM, no query builder, and no web framework are part of that policy ([A3](decisions.md), [A4](decisions.md)).

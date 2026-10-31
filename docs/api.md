@@ -15,7 +15,7 @@ Paths and fields here are the design contract. The routes the process serves are
 
 ## Authentication
 
-Every route except `GET /health` requires a bearer token:
+Every route except `GET /health` and `POST /v1/auth/login` requires a bearer token:
 
 ```
 Authorization: Bearer <token>
@@ -23,10 +23,32 @@ Authorization: Bearer <token>
 
 | Credential | Presented as | Scope |
 | --- | --- | --- |
-| Management token | Bearer token | All management routes. May call evaluation routes, and then must name `project_key` and `environment_key` in the body or path. |
+| Opaque management token | Bearer token | Every management and evaluation route. Break-glass / bootstrap / automation ([P8](decisions.md)). |
+| User JWT | Bearer token | Management routes allowed by the user's roles ([P14](decisions.md)). Does not call evaluate or evaluation-config. |
 | SDK token | Bearer token | Evaluation routes only. Project and environment are implied by the token. If the request also names them, they must match the token or the response is 403. |
 
-A missing or unknown token is 401. A known token used on a route it cannot call is 403. Storage and hashing are specified in [Security](security.md). v1 tokens are opaque. A standard JWT is a later way to produce the same principal ([P13](decisions.md)); this version does not accept one.
+A missing or unknown token is 401. A known token used on a route it cannot call, or a user lacking the required role, is 403. Storage, hashing, JWT verification, and the role matrix are in [Security](security.md). Opaque management and SDK secrets stay hash lookups. JWTs are verified per [P13](decisions.md); roles for an IdP-issued token come from the local user row.
+
+### Login
+
+| Method | Path | Behavior |
+| --- | --- | --- |
+| `POST` | `/v1/auth/login` | Body `{ "email", "password" }`. No bearer required. 200 returns `{ "access_token", "token_type": "bearer", "expires_in" }`. Wrong email or password is the same 401. A disabled user is 401. |
+
+No refresh token in this milestone.
+
+### Users
+
+Users are global (not nested under a project). Creating and changing users requires `writer` (or an opaque management token). Listing and fetching require `reader` or `writer`.
+
+| Method | Path | Behavior |
+| --- | --- | --- |
+| `POST` | `/v1/users` | Create `{ "email", "name", "roles", "password"? }`. Omitting `password` stores an IdP-only user. 201 returns the user without the password. |
+| `GET` | `/v1/users` | List users as `{ "items", "next_cursor" }`. Each item is `{ "id", "email", "name", "roles", "created_at", "disabled_at" }`. |
+| `GET` | `/v1/users/{userId}` | Fetch one user. |
+| `PATCH` | `/v1/users/{userId}` | Update name, password, roles, or disabled state. Email is immutable in this milestone. |
+
+`roles` is a list drawn from `reader`, `writer`, `protected_writer`. `protected_writer` without `writer` is stored but does not grant writes by itself. Passwords never appear in responses or audit JSON.
 
 ## Controller rules
 
@@ -39,13 +61,13 @@ A controller function:
 
 Controllers do not:
 
-- authorize beyond what the service enforces (they do not grow a second copy of the rule)
+- re-implement fine-grained role checks the service already owns (whether an environment is `protected` is decided in the service after SQL load)
 - open transactions
 - contain SQL
 - evaluate flags
 - catch `StorageError` in order to hide it; they map it to the error document with status 500 and no driver detail in the body
 
-Request-shape failures (invalid JSON, a missing required field, a wrong JSON type) are 400 `ValidationError` raised at the controller boundary, before the service runs. Domain failures use the same error document.
+The HTTP adapter runs a coarse authorize step (SDK vs management path, user has some management role). Request-shape failures (invalid JSON, a missing required field, a wrong JSON type) are 400 `ValidationError` raised at the controller boundary, before the service runs. Domain failures use the same error document.
 
 ## Error document
 
@@ -76,7 +98,7 @@ Request-shape failures (invalid JSON, a missing required field, a wrong JSON typ
 
 ## Management resources
 
-Base path: `/v1/projects`. All require a management token.
+Base path for catalog resources: `/v1/projects`. Authorization uses the role matrix in [Security](security.md): readers GET; writers mutate; protected environments need `protected_writer` as well.
 
 ### Projects
 
@@ -90,10 +112,11 @@ Base path: `/v1/projects`. All require a management token.
 
 | Method | Path | Behavior |
 | --- | --- | --- |
-| `POST` | `/v1/projects/{projectKey}/environments` | Create `{ "key", "name" }`. Response is 201 and `{ "key", "name" }`. Creating an environment does not copy targeting from another environment. Flags exist at project level; the new environment starts with each existing flag disabled, off variation `0`, and fallthrough variation `0`. |
+| `POST` | `/v1/projects/{projectKey}/environments` | Create `{ "key", "name", "protected"? }`. `protected` defaults to `false`. Response is 201 and `{ "key", "name", "protected" }`. Creating an environment does not copy targeting from another environment. Flags exist at project level; the new environment starts with each existing flag disabled, off variation `0`, and fallthrough variation `0`. Setting `protected` true on create requires `writer` and `protected_writer`. |
 | `GET` | `/v1/projects/{projectKey}/environments` | List environments in the project. An unknown project is 404. |
+| `PATCH` | `/v1/projects/{projectKey}/environments/{environmentKey}` | Update `name` and/or `protected`. Changing `protected` requires `writer` and `protected_writer`. |
 
-The response for an environment includes its key and name. It does not include the SDK token secret. SDK token issuance is a separate action so listing environments cannot leak secrets. A list response uses `next_cursor` null when the page is the last one.
+The response for an environment includes its key, name, and `protected`. It does not include the SDK token secret. SDK token issuance is a separate action so listing environments cannot leak secrets. A list response uses `next_cursor` null when the page is the last one. Mutating targeting or SDK tokens for a protected environment requires `writer` and `protected_writer`.
 
 ### SDK tokens
 
@@ -153,11 +176,11 @@ The response document is the stored configuration: `enabled`, `off_variation`, `
 | --- | --- | --- |
 | `GET` | `/v1/projects/{projectKey}/audit` | Newest first. Optional query: `flag`, `environment`, `limit`. `limit` defaults to 50 and caps at 200. |
 
-An audit item: `id`, `at`, `actor` (credential id and kind, never the secret), `action`, `flag_key`, `environment_key`, `before`, `after`.
+An audit item: `id`, `at`, `actor` (credential or user id and kind, never a secret or password), `action`, `flag_key`, `environment_key`, `before`, `after`. The response is `{ "items": [ ... ] }`. Readers may call this route.
 
 ## Evaluation resources
 
-These require an SDK token or a management token. With an SDK token, the environment is the token's environment and a mismatched project or environment field in the body is 403.
+These require an SDK token or an opaque management token. A user JWT cannot call them. With an SDK token, the environment is the token's environment and a mismatched project or environment field in the body is 403.
 
 ### Evaluate one
 

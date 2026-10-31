@@ -1,31 +1,116 @@
 """Turn an Authorization header into a principal.
 
-v1 accepts an opaque bearer token. A standard JWT is a later input that
-must produce the same principal and is rejected here (decisions P13).
+Accepts an opaque bearer token (hash lookup), a local HS256 JWT, or an
+IdP JWT verified via JWKS. A JWT must name an enabled local user; roles
+come from that row. Controllers do not parse the header.
 """
 
+from dataclasses import dataclass
+
 from domain.errors import Unauthenticated
-from domain.models.principal import Principal
-from repositories.credentials import find_active_principal
+from domain.jwt import looks_like_jwt, verify_access_token
+from domain.models.principal import KIND_USER, Principal
 from repositories.db import Connection
+from repositories.credentials import find_active_principal
+from repositories.users import UserRow, find_enabled_user_by_email, find_enabled_user_by_id
 
 _MESSAGE = "A valid credential is required."
 
 
-def authenticate(connection: Connection, authorization_header: str | None) -> Principal:
+@dataclass(frozen=True, repr=False)
+class JwtSettings:
+    """How this process issues and verifies JWTs.
+
+    secret is omitted from repr so a log of Settings does not record it.
+    ttl_seconds is the access-token lifetime used at local login.
+    jwks_url enables external IdP verification when non-empty.
+    """
+
+    secret: str
+    issuer: str
+    audience: str
+    ttl_seconds: int
+    jwks_url: str = ""
+
+    def __repr__(self) -> str:
+        """Describe JWT settings without the signing secret."""
+        return (
+            "JwtSettings("
+            f"issuer={self.issuer!r}, audience={self.audience!r}, "
+            f"ttl_seconds={self.ttl_seconds!r}, jwks_url={self.jwks_url!r})"
+        )
+
+
+def authenticate(
+    connection: Connection,
+    authorization_header: str | None,
+    jwt_settings: JwtSettings | None = None,
+) -> Principal:
     """Resolve a bearer token to a principal.
 
-    A missing header, a header that is not Bearer, an unknown token, and a
-    revoked token all raise Unauthenticated with the same message. Does not
-    commit and does not log the header. Does not accept a JWT.
+    Tries an opaque credential first. When that misses and the token looks
+    like a JWT, verifies HS256 or JWKS and loads the local user. A missing
+    header, a bad token, a revoked credential, a bad JWT, and a missing or
+    disabled user all raise Unauthenticated with the same message. Does not
+    commit and does not log the header.
     """
     token = _bearer_token(authorization_header)
     if token is None:
         raise Unauthenticated(_MESSAGE)
     principal = find_active_principal(connection, token)
-    if principal is None:
+    if principal is not None:
+        return principal
+    if jwt_settings is not None and looks_like_jwt(token):
+        return _authenticate_jwt(connection, token, jwt_settings)
+    raise Unauthenticated(_MESSAGE)
+
+
+def _authenticate_jwt(
+    connection: Connection,
+    token: str,
+    jwt_settings: JwtSettings,
+) -> Principal:
+    """Verify token and return a user principal from the local user row.
+
+    Roles come from the database, not from the JWT claims. Raises
+    Unauthenticated when verification fails or no enabled user matches.
+    """
+    payload = verify_access_token(
+        token,
+        jwt_settings.secret,
+        jwt_settings.issuer,
+        jwt_settings.audience,
+        jwt_settings.jwks_url,
+    )
+    user = _load_user(connection, payload)
+    if user is None:
         raise Unauthenticated(_MESSAGE)
-    return principal
+    return Principal(
+        credential_id=user.id,
+        kind=KIND_USER,
+        environment_id=None,
+        prefix="",
+        roles=user.roles,
+    )
+
+
+def _load_user(connection: Connection, payload: dict) -> UserRow | None:
+    """Return the enabled user named by sub or email in payload.
+
+    sub is tried first when it is a decimal user id. email (normalized) is
+    the IdP match. Returns None when neither matches.
+    """
+    sub = payload.get("sub")
+    if isinstance(sub, str) and sub.isdigit():
+        user = find_enabled_user_by_id(connection, int(sub))
+        if user is not None:
+            return user
+    email = payload.get("email")
+    if isinstance(email, str) and email.strip() != "":
+        return find_enabled_user_by_email(connection, email.strip().lower())
+    if isinstance(sub, str) and "@" in sub:
+        return find_enabled_user_by_email(connection, sub.strip().lower())
+    return None
 
 
 def _bearer_token(authorization_header: str | None) -> str | None:

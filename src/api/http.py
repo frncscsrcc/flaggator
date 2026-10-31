@@ -14,11 +14,19 @@ from wsgiref.simple_server import WSGIServer, make_server
 from api.request import Request, Response
 from api.routes import authorize, dispatch, requires_credential
 from domain.errors import DomainError, StorageError, ValidationError
-from domain.services.authentication import authenticate
+from domain.services.authentication import JwtSettings, authenticate
 from cache.null import NullCache
 from domain.validation import DEFAULT_EVAL_TTL_SECONDS
 from repositories.db import Database
 from repositories.eval_cache import EvaluationCache
+
+_DEFAULT_JWT = JwtSettings(
+    secret="",
+    issuer="flaggator",
+    audience="flaggator",
+    ttl_seconds=3600,
+    jwks_url="",
+)
 
 StartResponse = Callable[[str, list[tuple[str, str]]], object]
 
@@ -59,19 +67,22 @@ class Application:
         self,
         database: Database | None = None,
         evaluation_cache: EvaluationCache | None = None,
+        jwt_settings: JwtSettings | None = None,
     ) -> None:
-        """Keep database and the evaluation cache.
+        """Keep database, the evaluation cache, and JWT verify settings.
 
         database may be None only when the caller will request GET /health.
         When evaluation_cache is omitted, a cache that stores nothing is
         used so a write still registers a harmless delete. Composition is
-        the place that selects the process cache. Does not open a connection.
+        the place that selects the process cache and JWT settings. Does not
+        open a connection.
         """
         self._database = database
         if evaluation_cache is None:
             self._evaluation_cache = EvaluationCache(NullCache(), DEFAULT_EVAL_TTL_SECONDS)
         else:
             self._evaluation_cache = evaluation_cache
+        self._jwt_settings = _DEFAULT_JWT if jwt_settings is None else jwt_settings
 
     def __call__(self, environ: dict, start_response: StartResponse) -> list[bytes]:
         """Handle one request and return the body as a list of byte strings.
@@ -82,7 +93,9 @@ class Application:
         """
         try:
             request = request_from_environ(environ)
-            if requires_credential(request):
+            if request.path == "/v1/auth/login":
+                response = self._login(request)
+            elif requires_credential(request):
                 response = self._authenticated(request)
             else:
                 response = dispatch(request)
@@ -92,6 +105,25 @@ class Application:
             traceback.print_exc()
             response = response_for_domain_error(StorageError())
         return encode(start_response, response)
+
+    def _login(self, request: Request) -> Response:
+        """Handle local login without a bearer token.
+
+        Opens one connection and closes it before returning. A missing
+        database raises StorageError. Does not authenticate.
+        """
+        from api.users import login
+        from api.routes import method_not_allowed
+
+        if request.method != "POST":
+            return method_not_allowed("POST")
+        if self._database is None:
+            raise StorageError()
+        connection = self._database.connect()
+        try:
+            return login(connection, request, self._jwt_settings)
+        finally:
+            connection.close()
 
     def _authenticated(self, request: Request) -> Response:
         """Authenticate, authorize, and dispatch.
@@ -103,7 +135,11 @@ class Application:
             raise StorageError()
         connection = self._database.connect()
         try:
-            principal = authenticate(connection, request.headers.get("authorization"))
+            principal = authenticate(
+                connection,
+                request.headers.get("authorization"),
+                self._jwt_settings,
+            )
             authorize(request, principal)
             return dispatch(request, principal, connection, self._evaluation_cache)
         finally:

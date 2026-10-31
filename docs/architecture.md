@@ -10,10 +10,10 @@ The process exposes two groups of endpoints.
 
 | Plane | Callers | Allowed work |
 | --- | --- | --- |
-| Management | Operators holding a management token | Create and edit projects, environments, flags, variations, segments, and per-environment targeting. Read the audit log. |
+| Management | Opaque management token, or a user JWT with roles | Create and edit projects, environments, flags, variations, segments, and per-environment targeting. Manage users. Read the audit log. Role limits are in [Security](security.md). |
 | Evaluation | SDKs and backends holding an environment SDK token | Resolve a context to variation values for that environment. Read the configuration of that environment. |
 
-A management token may also evaluate, so an operator can debug a flag. An SDK token cannot mutate.
+An opaque management token may also evaluate, so an operator can debug a flag. A user JWT does not evaluate; evaluation stays on the SDK token (or the opaque management token). An SDK token cannot mutate.
 
 ## Layers
 
@@ -49,7 +49,7 @@ The process starts in one composition root (`src/composition.py`). That module r
 ## Request lifecycle
 
 1. The HTTP adapter reads the request bytes, parses the method, path, query, headers, and body, and builds a request object.
-2. Authentication runs before the controller body. An auth service hashes the bearer token and loads the credential through the credential repository. The controller receives a principal that is already resolved, or the adapter returns 401.
+2. Authentication runs before the controller body. An auth service accepts an opaque token (hash lookup) or a JWT (verify, then load the local user for roles). The controller receives a principal that is already resolved, or the adapter returns 401.
 3. The controller checks that the JSON has the expected shape and builds a command dataclass. Shape means types and required fields. Whether a variation index exists, whether a rule is well formed, and whether the principal may touch the project are domain checks.
 4. The controller calls one service function: `service(conn, principal, command)`.
 5. The service authorizes the principal, validates the command against the current state, opens a transaction, calls repository functions, and commits if the work succeeds. For evaluation it loads configuration and calls the pure evaluator.

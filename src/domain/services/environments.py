@@ -1,4 +1,4 @@
-"""Create and list environments.
+"""Create, patch, and list environments.
 
 Creating an environment writes one disabled configuration for every flag
 already in the project. With no flags, that loop inserts nothing.
@@ -7,13 +7,24 @@ already in the project. With no flags, that loop inserts nothing.
 import json
 
 from domain.errors import Conflict, ConstraintViolation, NotFound, ValidationError
-from domain.models.catalog import CreateNamed, Environment, EnvironmentPage, KeysetQuery
+from domain.models.catalog import (
+    CreateEnvironment,
+    Environment,
+    EnvironmentPage,
+    KeysetQuery,
+    PatchEnvironment,
+)
 from domain.models.principal import Principal
-from domain.services.access import require_management
+from domain.services.access import require_protected_write, require_reader
 from domain.services.audit import record_change
 from domain.validation import is_public_key, require_display_name, require_page_limit, require_public_key
 from repositories.db import Connection
-from repositories.environments import insert_environment, list_environments
+from repositories.environments import (
+    find_environment,
+    insert_environment,
+    list_environments,
+    update_environment,
+)
 from repositories.flag_configs import insert_disabled_config, list_flag_ids
 from repositories.projects import find_project
 
@@ -22,7 +33,7 @@ def create_environment(
     connection: Connection,
     principal: Principal,
     project_key: str,
-    command: CreateNamed,
+    command: CreateEnvironment,
 ) -> Environment:
     """Insert an environment, disabled flag configs, and one audit row.
 
@@ -32,17 +43,24 @@ def create_environment(
     0 and fallthrough variation 0. The audit document does not contain a
     credential secret.
     """
-    require_management(principal)
+    require_protected_write(principal, command.protected)
     if not is_public_key(project_key):
         raise NotFound("Project does not exist.")
     key = require_public_key(command.key, "key")
     name = require_display_name(command.name, "name")
+    protected = command.protected
     with connection.transaction():
         project = find_project(connection, project_key)
         if project is None:
             raise NotFound("Project does not exist.")
         try:
-            environment_id = insert_environment(connection, project.id, key, name)
+            environment_id = insert_environment(
+                connection,
+                project.id,
+                key,
+                name,
+                protected,
+            )
         except ConstraintViolation as exc:
             raise Conflict("Environment key already exists.") from exc
         for flag_id in list_flag_ids(connection, project.id):
@@ -55,9 +73,60 @@ def create_environment(
             key,
             None,
             None,
-            _after_document(key, name),
+            _environment_document(key, name, protected),
         )
-    return Environment(key=key, name=name)
+    return Environment(key=key, name=name, protected=protected)
+
+
+def patch_environment(
+    connection: Connection,
+    principal: Principal,
+    project_key: str,
+    environment_key: str,
+    command: PatchEnvironment,
+) -> Environment:
+    """Update name and/or protected for one environment.
+
+    Raises Forbidden when the principal lacks writer or, for a protected
+    environment, protected_writer. Raises NotFound when the project or
+    environment is absent, and ValidationError for a bad name. Omitted
+    fields stay unchanged.
+    """
+    if not is_public_key(project_key) or not is_public_key(environment_key):
+        raise NotFound("Environment does not exist.")
+    name = None
+    if command.name is not None:
+        name = require_display_name(command.name, "name")
+    with connection.transaction():
+        project = find_project(connection, project_key)
+        if project is None:
+            raise NotFound("Environment does not exist.")
+        current = find_environment(connection, project.id, environment_key)
+        if current is None:
+            raise NotFound("Environment does not exist.")
+        next_name = current.name if name is None else name
+        next_protected = current.protected if command.protected is None else command.protected
+        require_protected_write(principal, current.protected or next_protected)
+        if next_name == current.name and next_protected == current.protected:
+            return Environment(
+                key=current.key,
+                name=current.name,
+                protected=current.protected,
+            )
+        before = _environment_document(current.key, current.name, current.protected)
+        update_environment(connection, current.id, next_name, next_protected)
+        after = _environment_document(current.key, next_name, next_protected)
+        record_change(
+            connection,
+            principal,
+            "environment.patch",
+            project.key,
+            current.key,
+            None,
+            before,
+            after,
+        )
+    return Environment(key=current.key, name=next_name, protected=next_protected)
 
 
 def list_environments_page(
@@ -73,7 +142,7 @@ def list_environments_page(
     and the page share one transaction. next_key is None when no further
     page exists.
     """
-    require_management(principal)
+    require_reader(principal)
     if not is_public_key(project_key):
         raise NotFound("Project does not exist.")
     checked = _checked_query(query)
@@ -105,9 +174,13 @@ def _checked_query(query: KeysetQuery) -> KeysetQuery:
     return KeysetQuery(limit=limit, after_key=query.after_key)
 
 
-def _after_document(key: str, name: str) -> str:
-    """Return the audit JSON for a created environment.
+def _environment_document(key: str, name: str, protected: bool) -> str:
+    """Return the audit JSON for an environment.
 
     The document has the public fields only. Does not include a secret.
     """
-    return json.dumps({"key": key, "name": name}, sort_keys=True, separators=(",", ":"))
+    return json.dumps(
+        {"key": key, "name": name, "protected": protected},
+        sort_keys=True,
+        separators=(",", ":"),
+    )

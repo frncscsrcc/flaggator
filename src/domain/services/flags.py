@@ -18,7 +18,7 @@ from domain.models.flag import (
 )
 from domain.models.catalog import KeysetQuery
 from domain.models.principal import Principal
-from domain.services.access import require_management
+from domain.services.access import require_protected_write, require_reader, require_writer
 from domain.services.audit import record_change
 from domain.validation import (
     is_public_key,
@@ -30,7 +30,12 @@ from domain.validation import (
     variation_text,
 )
 from repositories.db import Connection
-from repositories.environments import find_environment, list_environment_ids, list_environment_keys
+from repositories.environments import (
+    find_environment,
+    has_protected_environment,
+    list_environment_ids,
+    list_environment_keys,
+)
 from repositories.eval_cache import EvaluationCache
 from repositories.flags import (
     FlagRow,
@@ -67,13 +72,13 @@ def create_flag(
     off variation 0 and fallthrough variation 0. The audit document has no
     credential secret and no environment rule tree.
     """
-    require_management(principal)
     key = require_public_key(command.key, "key")
     name = require_display_name(command.name, "name")
     description = require_description(command.description)
     texts = _variation_texts(command.variations, _CREATE_MINIMUM)
     with connection.transaction():
         project = _require_project(connection, project_key)
+        require_protected_write(principal, has_protected_environment(connection, project.id))
         try:
             flag_id = insert_flag(connection, project.id, key, name, description)
         except ConstraintViolation as exc:
@@ -113,7 +118,7 @@ def get_flag(
     flag is absent, including when the key cannot exist. Does not open a
     transaction.
     """
-    require_management(principal)
+    require_reader(principal)
     project = _require_project(connection, project_key)
     return _load_flag(connection, project.id, flag_key)
 
@@ -132,7 +137,7 @@ def list_flags_page(
     an SDK token and ValidationError for a bad limit or cursor. next_key is
     None when no further page exists. Does not open a transaction.
     """
-    require_management(principal)
+    require_reader(principal)
     project = _require_project(connection, project_key)
     environment_id = _environment_id(connection, project.id, environment_key)
     checked = _checked_query(query)
@@ -164,7 +169,7 @@ def patch_flag(
     Raises Forbidden, NotFound, and ValidationError as the other flag
     methods do. Writes one audit row in the same transaction.
     """
-    require_management(principal)
+    require_writer(principal)
     name = None if command.name is None else require_display_name(command.name, "name")
     description = None if command.description is None else require_description(command.description)
     with connection.transaction():

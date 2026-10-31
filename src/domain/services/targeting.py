@@ -19,7 +19,7 @@ from domain.models.targeting import (
     RuleInput,
     VariationServeInput,
 )
-from domain.services.access import require_management
+from domain.services.access import require_protected_write, require_reader
 from domain.services.audit import record_change
 from domain.validation import (
     MAX_ATTRIBUTE_NAME_LENGTH,
@@ -91,7 +91,7 @@ def get_targeting(
     flag, or the environment is absent, including when a key cannot exist.
     Reads SQL, not a cache. Does not open a transaction.
     """
-    require_management(principal)
+    require_reader(principal)
     project = _require_project(connection, project_key)
     flag = _require_flag(connection, project.id, flag_key)
     environment = _require_environment(connection, project.id, environment_key)
@@ -115,11 +115,11 @@ def replace_targeting(
     absent, and ValidationError when the document breaks a targeting rule.
     The audit documents are the previous and stored configurations.
     """
-    require_management(principal)
     with connection.transaction():
         project = _require_project(connection, project_key)
         flag = _require_flag(connection, project.id, flag_key)
         environment = _require_environment(connection, project.id, environment_key)
+        require_protected_write(principal, environment.protected)
         current = _load_config(connection, flag.id, environment.id)
         if command.version != current.version:
             raise Conflict("The configuration version is stale.")
