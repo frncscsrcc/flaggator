@@ -1,0 +1,37 @@
+# Minimal image for one flaggator process.
+#
+# The process is its own HTTP server (stdlib WSGI, 32 in-flight requests,
+# 30 second socket timeout). gunicorn and uvicorn are not used: gunicorn
+# would replace that server, and uvicorn speaks ASGI.
+#
+# Migrations are found by walking up from the installed source, so the
+# install stays editable and /app/db/migrations remains on that walk.
+
+FROM python:3.12-slim-bookworm
+
+RUN useradd --create-home --uid 1000 --user-group flaggator
+
+WORKDIR /app
+
+COPY pyproject.toml README.md LICENSE ./
+COPY src ./src
+COPY db ./db
+
+RUN pip install --no-cache-dir -e .
+
+RUN mkdir -p /data && chown flaggator:flaggator /data
+
+USER flaggator
+
+ENV PYTHONUNBUFFERED=1 \
+    FLAGGATOR_BIND_HOST=0.0.0.0 \
+    FLAGGATOR_BIND_PORT=8080 \
+    FLAGGATOR_SQLITE_PATH=/data/flaggator.db
+
+EXPOSE 8080
+VOLUME /data
+
+HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 \
+    CMD python -c "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8080/health', timeout=2)"
+
+CMD ["python", "-m", "main"]

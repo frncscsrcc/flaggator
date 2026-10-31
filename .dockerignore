@@ -1,0 +1,12 @@
+.git
+.venv
+.html
+.mock
+.cursor
+**/__pycache__
+**/*.pyc
+.DS_Store
+flaggator.db
+flaggator.db-wal
+flaggator.db-shm
+tests

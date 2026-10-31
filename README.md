@@ -64,6 +64,30 @@ python -m main
 
 The process listens on `127.0.0.1:8080`. `FLAGGATOR_BIND_HOST`, `FLAGGATOR_BIND_PORT`, and `FLAGGATOR_SQLITE_PATH` change the address and the database file.
 
+### Docker
+
+`Dockerfile` builds one process on `python:3.12-slim-bookworm`. The image does not add gunicorn or uvicorn. `python -m main` is the HTTP server: the standard-library WSGI server, at most 32 requests in flight, and a 30 second timeout on each accepted socket.
+
+The image listens on `0.0.0.0:8080` so a published port reaches the process. The SQLite file is `/data/flaggator.db`. Use the same volume and the same `FLAGGATOR_JWT_SECRET` for bootstrap and for the long-running process: the management token is stored in the database, and the secret signs local login tokens. A bind-mounted data directory must be writable by uid 1000.
+
+```bash
+export FLAGGATOR_JWT_SECRET="$(python -c 'import secrets; print(secrets.token_urlsafe(32))')"
+
+docker build -t flaggator:1.0.0 .
+
+docker volume create flaggator-data
+docker run --rm -v flaggator-data:/data \
+  -e FLAGGATOR_JWT_SECRET \
+  flaggator:1.0.0 python -m main bootstrap
+
+docker run -d --name flaggator -p 8080:8080 \
+  -v flaggator-data:/data \
+  -e FLAGGATOR_JWT_SECRET \
+  flaggator:1.0.0
+```
+
+`-e FLAGGATOR_JWT_SECRET` forwards the variable from the shell, so bootstrap and the long-running process share it. Bootstrap prints the management token once on stdout. `GET /health` is the image health check and does not need a credential.
+
 ### First user and login
 
 ```bash
