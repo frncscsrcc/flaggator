@@ -20,6 +20,7 @@ class Request:
     query: dict[str, str]
     headers: dict[str, str]
     body: bytes
+    client_address: str = ""
 
 
 @dataclass(frozen=True)

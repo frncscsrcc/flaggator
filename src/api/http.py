@@ -5,20 +5,25 @@ turns those into HTTP. It does not contain a business rule.
 """
 
 import json
+import threading
 import traceback
 from collections.abc import Callable
 from socketserver import ThreadingMixIn
 from urllib.parse import parse_qs
 from wsgiref.simple_server import WSGIServer, make_server
 
+from api.login_limit import LoginLimiter
 from api.request import Request, Response
 from api.routes import authorize, dispatch, requires_credential
-from domain.errors import DomainError, StorageError, ValidationError
+from domain.errors import DomainError, StorageError, TooManyRequests, ValidationError
 from domain.services.authentication import JwtSettings, authenticate
 from cache.null import NullCache
-from domain.validation import DEFAULT_EVAL_TTL_SECONDS
+from domain.validation import DEFAULT_EVAL_TTL_SECONDS, MAX_REQUEST_BODY_BYTES
 from repositories.db import Database
 from repositories.eval_cache import EvaluationCache
+
+_MAX_IN_FLIGHT = 32
+_SOCKET_TIMEOUT_SECONDS = 30
 
 _DEFAULT_JWT = JwtSettings(
     secret="",
@@ -40,19 +45,58 @@ _REASONS = {
     404: "Not Found",
     405: "Method Not Allowed",
     409: "Conflict",
+    429: "Too Many Requests",
     500: "Internal Server Error",
+    503: "Service Unavailable",
 }
 
 
 class ThreadingWSGIServer(ThreadingMixIn, WSGIServer):
     """A WSGI server that runs each request on its own thread.
 
-    daemon_threads lets the process exit when the main thread does. The
-    memory cache lock is what makes sharing the cache across these threads
-    safe.
+    daemon_threads lets the process exit when the main thread does. At most
+    _MAX_IN_FLIGHT requests run at once. Each accepted socket has a read
+    timeout. The memory cache lock is what makes sharing the cache across
+    these threads safe.
     """
 
     daemon_threads = True
+
+    def __init__(self, server_address, RequestHandlerClass, bind_and_activate=True):
+        """Bind the port and create the in-flight semaphore."""
+        super().__init__(server_address, RequestHandlerClass, bind_and_activate)
+        self._in_flight = threading.BoundedSemaphore(_MAX_IN_FLIGHT)
+
+    def get_request(self):
+        """Accept one socket and set its timeout.
+
+        The listening socket itself keeps the default blocking accept.
+        """
+        request, client_address = super().get_request()
+        request.settimeout(_SOCKET_TIMEOUT_SECONDS)
+        return request, client_address
+
+    def process_request(self, request, client_address):
+        """Start a worker, or answer 503 when every slot is taken.
+
+        The slot is released in the worker thread. A failure to start the
+        thread releases it here.
+        """
+        if not self._in_flight.acquire(blocking=False):
+            _write_unavailable(request)
+            return
+        try:
+            super().process_request(request, client_address)
+        except Exception:
+            self._in_flight.release()
+            raise
+
+    def process_request_thread(self, request, client_address):
+        """Handle one request and then free its slot."""
+        try:
+            super().process_request_thread(request, client_address)
+        finally:
+            self._in_flight.release()
 
 
 class Application:
@@ -83,6 +127,7 @@ class Application:
         else:
             self._evaluation_cache = evaluation_cache
         self._jwt_settings = _DEFAULT_JWT if jwt_settings is None else jwt_settings
+        self._login_limiter = LoginLimiter()
 
     def __call__(self, environ: dict, start_response: StartResponse) -> list[bytes]:
         """Handle one request and return the body as a list of byte strings.
@@ -117,6 +162,8 @@ class Application:
 
         if request.method != "POST":
             return method_not_allowed("POST")
+        if not self._login_limiter.allow(request.client_address):
+            raise TooManyRequests()
         if self._database is None:
             raise StorageError()
         connection = self._database.connect()
@@ -164,8 +211,21 @@ def request_from_environ(environ: dict) -> Request:
             details=[{"field": "content-length", "message": "Content-Length must be a number."}],
         )
     length = int(raw_length)
+    if length > MAX_REQUEST_BODY_BYTES:
+        raise ValidationError(
+            "The request body is too large.",
+            details=[{"field": "body", "message": "The body must be at most 256 KiB."}],
+        )
     body = environ["wsgi.input"].read(length)
-    return Request(method=method, path=path, query=query, headers=headers, body=body)
+    client_address = str(environ.get("REMOTE_ADDR", "") or "")
+    return Request(
+        method=method,
+        path=path,
+        query=query,
+        headers=headers,
+        body=body,
+        client_address=client_address,
+    )
 
 
 def response_for_domain_error(error: DomainError) -> Response:
@@ -212,6 +272,34 @@ def serve(application: Application, host: str, port: int) -> None:
     """
     server = make_server(host, port, application, server_class=ThreadingWSGIServer)
     server.serve_forever()
+
+
+def _write_unavailable(request) -> None:
+    """Send 503 on request and close it.
+
+    Used when the server has no free worker slot. Does not read a body.
+    """
+    payload = json.dumps(
+        {
+            "error": {
+                "code": "unavailable",
+                "message": "The server is busy.",
+                "details": [],
+            }
+        }
+    ).encode("utf-8")
+    head = (
+        b"HTTP/1.1 503 Service Unavailable\r\n"
+        b"Content-Type: application/json; charset=utf-8\r\n"
+        b"Content-Length: " + str(len(payload)).encode("ascii") + b"\r\n"
+        b"Connection: close\r\n\r\n"
+    )
+    try:
+        request.sendall(head + payload)
+    except OSError:
+        pass
+    finally:
+        request.close()
 
 
 def _first_query_values(query_string: str) -> dict[str, str]:

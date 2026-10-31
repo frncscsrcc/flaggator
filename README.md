@@ -40,6 +40,7 @@ Dependency direction is one way: `api` → `domain services` → `repositories`.
 | [Persistence](docs/persistence.md) | SQL style, DTO mapping, transactions, schema |
 | [Cache](docs/cache.md) | Cache protocol, what is stored, invalidation |
 | [Security](docs/security.md) | Tokens, authorization, injection, audit, limits |
+| [Security audit](docs/security_audit.md) | Point-in-time findings and the fix order |
 | [Code style](docs/style.md) | How functions are named, commented, and kept explicit |
 | [Example](docs/example.md) | A checkout rollout, from the management token to an SDK call |
 

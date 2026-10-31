@@ -17,7 +17,7 @@ from cache.null import NullCache
 from cache.protocol import Cache
 from domain.errors import ValidationError
 from domain.services.authentication import JwtSettings
-from domain.validation import DEFAULT_EVAL_TTL_SECONDS
+from domain.validation import DEFAULT_EVAL_TTL_SECONDS, MIN_JWT_SECRET_BYTES
 from repositories.db import Database
 from repositories.eval_cache import EvaluationCache
 from repositories.migrate import apply_migrations, default_migrations_directory
@@ -89,6 +89,7 @@ def load_settings(environment: Mapping[str, str] | None = None) -> Settings:
     integer. Does not open a connection.
     """
     source = os.environ if environment is None else environment
+    jwt_secret = _jwt_secret(source.get("FLAGGATOR_JWT_SECRET", ""))
     return Settings(
         engine=source.get("FLAGGATOR_ENGINE", "sqlite"),
         sqlite_path=source.get("FLAGGATOR_SQLITE_PATH", "flaggator.db"),
@@ -104,7 +105,7 @@ def load_settings(environment: Mapping[str, str] | None = None) -> Settings:
             source.get("FLAGGATOR_EVAL_TTL_SECONDS", str(DEFAULT_EVAL_TTL_SECONDS)),
             "eval_ttl_seconds",
         ),
-        jwt_secret=source.get("FLAGGATOR_JWT_SECRET", ""),
+        jwt_secret=jwt_secret,
         jwt_issuer=source.get("FLAGGATOR_JWT_ISSUER", "flaggator"),
         jwt_audience=source.get("FLAGGATOR_JWT_AUDIENCE", "flaggator"),
         jwt_ttl_seconds=_positive_int(
@@ -211,6 +212,27 @@ def bootstrap_management_token(
     notice_stream.write("Save this token. It will not be shown again.\n")
     secret_stream.write(token + "\n")
     secret_stream.flush()
+
+
+def _jwt_secret(raw: str) -> str:
+    """Return raw when it is empty or at least 32 UTF-8 bytes.
+
+    Empty means local login is off. A shorter non-empty secret is rejected
+    so HS256 is not used with a weak key. Does not log raw.
+    """
+    if raw == "":
+        return raw
+    if len(raw.encode("utf-8")) < MIN_JWT_SECRET_BYTES:
+        raise ValidationError(
+            "The JWT signing secret is not valid.",
+            details=[
+                {
+                    "field": "jwt_secret",
+                    "message": "FLAGGATOR_JWT_SECRET must be at least 32 bytes.",
+                }
+            ],
+        )
+    return raw
 
 
 def _positive_int(raw: str, field: str) -> int:

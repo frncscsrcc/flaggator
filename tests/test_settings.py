@@ -45,9 +45,16 @@ class SettingsTests(unittest.TestCase):
 
     def test_repr_hides_the_jwt_secret(self) -> None:
         """A logged Settings value must not contain the JWT signing secret."""
-        settings = load_settings({"FLAGGATOR_JWT_SECRET": "jwt-signing-secret"})
-        self.assertEqual(settings.jwt_secret, "jwt-signing-secret")
-        self.assertNotIn("jwt-signing-secret", repr(settings))
+        secret = "jwt-signing-secret-must-be-32b!!"
+        settings = load_settings({"FLAGGATOR_JWT_SECRET": secret})
+        self.assertEqual(settings.jwt_secret, secret)
+        self.assertNotIn(secret, repr(settings))
+
+    def test_short_jwt_secret_is_rejected(self) -> None:
+        """A non-empty signing secret shorter than 32 bytes fails at startup."""
+        with self.assertRaises(ValidationError) as caught:
+            load_settings({"FLAGGATOR_JWT_SECRET": "too-short"})
+        self.assertEqual(caught.exception.details[0]["field"], "jwt_secret")
 
     def test_bad_port_is_a_validation_error(self) -> None:
         """A non-numeric bind port fails before a socket is opened."""

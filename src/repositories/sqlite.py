@@ -4,6 +4,7 @@ This module is the only one that imports sqlite3. Repository SQL stays in
 other modules and uses the connection returned here.
 """
 
+import os
 import sqlite3
 from collections.abc import Mapping, Sequence
 
@@ -48,10 +49,15 @@ class SqliteConnection(Transactional):
     and does not share it.
     """
 
-    def __init__(self, raw: sqlite3.Connection) -> None:
-        """Adopt a connection that already has foreign keys and WAL set."""
+    def __init__(self, raw: sqlite3.Connection, path: str) -> None:
+        """Adopt a connection that already has foreign keys and WAL set.
+
+        path is the database file. Mode 0600 is applied to it and to the
+        WAL siblings after a commit.
+        """
         super().__init__()
         self._raw = raw
+        self._path = path
 
     def execute(self, sql: str, params: tuple = ()) -> SqliteCursor:
         """Run one statement. `?` placeholders are passed through to SQLite.
@@ -92,11 +98,12 @@ class SqliteConnection(Transactional):
             raise StorageError() from exc
 
     def _commit(self) -> None:
-        """Commit the open transaction."""
+        """Commit the open transaction and tighten file modes."""
         try:
             self._raw.execute("COMMIT")
         except sqlite3.Error as exc:
             raise StorageError() from exc
+        _restrict_sqlite_files(self._path)
 
     def _rollback(self) -> None:
         """Roll back the open transaction."""
@@ -139,7 +146,8 @@ class SqliteDatabase:
         except sqlite3.Error as exc:
             raw.close()
             raise StorageError() from exc
-        return SqliteConnection(raw)
+        _restrict_sqlite_files(self._path)
+        return SqliteConnection(raw, self._path)
 
     def ensure_schema_migrations(self, connection: Connection) -> None:
         """Create the migrations table if this file does not have it yet.
@@ -153,6 +161,18 @@ class SqliteDatabase:
             )
             """
         )
+
+
+def _restrict_sqlite_files(path: str) -> None:
+    """Set mode 0600 on the database file and its WAL siblings.
+
+    A sibling that does not exist yet is skipped. The parent directory
+    mode is left alone. Does not log path contents.
+    """
+    for candidate in (path, path + "-wal", path + "-shm"):
+        if not os.path.exists(candidate):
+            continue
+        os.chmod(candidate, 0o600)
 
 
 def _translate_sqlite_error(exc: sqlite3.Error) -> StorageError:

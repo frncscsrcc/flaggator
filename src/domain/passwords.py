@@ -77,6 +77,25 @@ def hash_password(password: str) -> str:
     return f"scrypt${_N}${_R}${_P}${salt_b64}${digest_b64}"
 
 
+def password_is_checkable(password: str) -> bool:
+    """Return True when password is inside the length rules.
+
+    Surrounding spaces are rejected. Does not hash and does not log password.
+    """
+    if password == "" or password != password.strip():
+        return False
+    return _MIN_PASSWORD_LENGTH <= len(password) <= _MAX_PASSWORD_LENGTH
+
+
+def burn_password_check(password: str) -> None:
+    """Spend one scrypt verification and ignore the result.
+
+    Login calls this when there is no stored hash, so the CPU cost matches
+    a wrong password. Does not log password.
+    """
+    verify_password(password, _dummy_stored_hash())
+
+
 def verify_password(password: str, stored: str) -> bool:
     """Return True when password matches stored.
 
@@ -103,3 +122,17 @@ def verify_password(password: str, stored: str) -> bool:
         dklen=len(expected),
     )
     return hmac.compare_digest(digest, expected)
+
+
+_dummy_stored: str | None = None
+
+
+def _dummy_stored_hash() -> str:
+    """Return a fixed scrypt hash used only to burn a check.
+
+    Built once per process. The plaintext is not a credential.
+    """
+    global _dummy_stored
+    if _dummy_stored is None:
+        _dummy_stored = hash_password("not-a-user-password")
+    return _dummy_stored

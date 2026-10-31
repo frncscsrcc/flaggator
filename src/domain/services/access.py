@@ -34,6 +34,17 @@ def require_writer(principal: Principal) -> None:
     raise Forbidden("A writer role is required.")
 
 
+def require_protected_writer(principal: Principal) -> None:
+    """Raise Forbidden unless principal holds protected_writer.
+
+    An opaque management token holds every role, so it passes. Does not
+    read the database and does not commit.
+    """
+    if ROLE_PROTECTED_WRITER in principal.roles:
+        return
+    raise Forbidden("A protected_writer role is required.")
+
+
 def require_protected_write(principal: Principal, protected: bool) -> None:
     """Raise Forbidden unless principal may write given protected.
 

@@ -86,6 +86,24 @@ def find_flag(connection: Connection, project_id: int, key: str) -> FlagRow | No
     return _flag_row(row)
 
 
+def count_flags(connection: Connection, project_id: int) -> int:
+    """Return how many flags the project has.
+
+    Does not commit.
+    """
+    row = connection.execute(
+        """
+        SELECT COUNT(*) AS n
+          FROM flags
+         WHERE project_id = ?
+        """,
+        (project_id,),
+    ).fetchone()
+    if row is None:
+        return 0
+    return int(row["n"])
+
+
 def list_flags(
     connection: Connection,
     project_id: int,

@@ -75,14 +75,14 @@ def _authenticate_jwt(
     Roles come from the database, not from the JWT claims. Raises
     Unauthenticated when verification fails or no enabled user matches.
     """
-    payload = verify_access_token(
+    payload, algorithm = verify_access_token(
         token,
         jwt_settings.secret,
         jwt_settings.issuer,
         jwt_settings.audience,
         jwt_settings.jwks_url,
     )
-    user = _load_user(connection, payload)
+    user = _load_user(connection, payload, algorithm)
     if user is None:
         raise Unauthenticated(_MESSAGE)
     return Principal(
@@ -94,20 +94,23 @@ def _authenticate_jwt(
     )
 
 
-def _load_user(connection: Connection, payload: dict) -> UserRow | None:
-    """Return the enabled user named by sub or email in payload.
+def _load_user(connection: Connection, payload: dict, algorithm: str) -> UserRow | None:
+    """Return the enabled user named by this verified token.
 
-    sub is tried first when it is a decimal user id. email (normalized) is
-    the IdP match. Returns None when neither matches.
+    An HS256 token is one this process signed, so a decimal sub is the
+    local user id. A JWKS token matches the normalized email claim, or a
+    sub that itself contains @. A numeric sub on an IdP token is ignored.
+    Returns None when nothing matches.
     """
-    sub = payload.get("sub")
-    if isinstance(sub, str) and sub.isdigit():
-        user = find_enabled_user_by_id(connection, int(sub))
-        if user is not None:
-            return user
+    if algorithm == "HS256":
+        sub = payload.get("sub")
+        if isinstance(sub, str) and sub.isdigit():
+            return find_enabled_user_by_id(connection, int(sub))
+        return None
     email = payload.get("email")
     if isinstance(email, str) and email.strip() != "":
         return find_enabled_user_by_email(connection, email.strip().lower())
+    sub = payload.get("sub")
     if isinstance(sub, str) and "@" in sub:
         return find_enabled_user_by_email(connection, sub.strip().lower())
     return None

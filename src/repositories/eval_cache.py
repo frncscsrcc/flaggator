@@ -5,6 +5,7 @@ miss and deletes the entry after a commit. It does not evaluate flags.
 """
 
 import json
+import threading
 
 from cache.protocol import Cache
 from domain.validation import MAX_CACHED_BUNDLE_BYTES
@@ -25,6 +26,8 @@ class EvaluationCache:
         """Keep the byte cache and the TTL. Does not connect."""
         self._cache = cache
         self._ttl_seconds = ttl_seconds
+        self._lock = threading.Lock()
+        self._generations: dict[str, int] = {}
 
     def load_document(
         self,
@@ -41,6 +44,7 @@ class EvaluationCache:
         A larger document is returned and not stored. Does not commit.
         """
         key = cache_key(project_key, environment_key)
+        generation = self._generation(key)
         cached = self._cache.get(key)
         if cached is not None:
             document = _decode(cached, project_key, environment_key)
@@ -50,8 +54,8 @@ class EvaluationCache:
         segments = list_environment_segments(connection, environment_id)
         document = _document(project_key, environment_key, flags, segments)
         encoded = dump_json_text(document).encode("utf-8")
-        if len(encoded) <= MAX_CACHED_BUNDLE_BYTES:
-            self._cache.set(key, encoded, self._ttl_seconds)
+        if len(encoded) <= MAX_CACHED_BUNDLE_BYTES and self._generation(key) == generation:
+            self._store_if_current(key, generation, encoded)
         return document
 
     def invalidate_environment(
@@ -65,7 +69,7 @@ class EvaluationCache:
         The delete is discarded when the transaction rolls back. Raises
         StorageError when no transaction is open. Does not delete now.
         """
-        connection.on_commit(_DeleteKey(self._cache, cache_key(project_key, environment_key)))
+        connection.on_commit(_DropGeneration(self, cache_key(project_key, environment_key)))
 
     def invalidate_project(
         self,
@@ -82,17 +86,44 @@ class EvaluationCache:
             self.invalidate_environment(connection, project_key, environment_key)
 
 
-class _DeleteKey:
-    """One cache delete registered on a transaction."""
+    def _generation(self, key: str) -> int:
+        """Return the invalidation count for key. A new key is 0."""
+        with self._lock:
+            return self._generations.get(key, 0)
 
-    def __init__(self, cache: Cache, key: str) -> None:
+    def _store_if_current(self, key: str, generation: int, encoded: bytes) -> None:
+        """Store encoded when key has not been invalidated since generation.
+
+        The check and the set share the lock with invalidation. Does not
+        read the database.
+        """
+        with self._lock:
+            if self._generations.get(key, 0) != generation:
+                return
+            self._cache.set(key, encoded, self._ttl_seconds)
+
+    def drop(self, key: str) -> None:
+        """Bump key's generation and delete the cached bytes.
+
+        A load that started before this call will not store its result.
+        Does not read the database.
+        """
+        with self._lock:
+            self._generations[key] = self._generations.get(key, 0) + 1
+            self._cache.delete(key)
+
+
+class _DropGeneration:
+    """One cache drop registered on a transaction."""
+
+    def __init__(self, owner: EvaluationCache, key: str) -> None:
         """Remember the key. Does not delete it yet."""
-        self._cache = cache
+        self._owner = owner
         self._key = key
 
     def __call__(self) -> None:
-        """Delete the key. A missing key is not an error."""
-        self._cache.delete(self._key)
+        """Bump the generation and delete the key."""
+        self._owner.drop(self._key)
 
 
 def cache_key(project_key: str, environment_key: str) -> str:

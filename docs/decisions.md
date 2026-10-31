@@ -144,7 +144,7 @@ The process accepts a standard JWT on the `Authorization: Bearer` header in addi
 Two issuance / verify paths:
 
 - **Local:** `POST /v1/auth/login` with email and password returns an access JWT signed HS256 by flaggator (`FLAGGATOR_JWT_SECRET`). No refresh token in this milestone.
-- **External IdP:** `FLAGGATOR_JWT_JWKS_URL` plus issuer and audience. RS*/ES* tokens are verified against that JWKS. The IdP proves identity. **Roles come from the matching local user row** (by decimal `sub` or `email` claim), not from trusting the IdP to mint `protected_writer`. A JWT with no matching enabled local user is 401.
+- **External IdP:** `FLAGGATOR_JWT_JWKS_URL` plus issuer and audience. RS*/ES* tokens are verified against that JWKS. The IdP proves identity. **Roles come from the matching local user row** (HS256: decimal `sub`; JWKS: normalized `email`, or `sub` only when it contains `@`), not from trusting the IdP to mint `protected_writer`. A numeric IdP `sub` does not select a local id. A JWT with no matching enabled local user is 401.
 
 Minimum claims on a locally issued token: `sub`, `roles`, `iss`, `aud`, `exp`, `iat`. Controllers and domain services receive a principal and do not parse the header. Signing and verification use **PyJWT** (MIT) with the `crypto` extra for JWKS ([Security](security.md) dependency policy). A static verifying key (without JWKS) is not implemented yet.
 

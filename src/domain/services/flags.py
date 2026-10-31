@@ -21,6 +21,7 @@ from domain.models.principal import Principal
 from domain.services.access import require_protected_write, require_reader, require_writer
 from domain.services.audit import record_change
 from domain.validation import (
+    MAX_FLAGS_PER_PROJECT,
     is_public_key,
     require_description,
     require_display_name,
@@ -39,6 +40,7 @@ from repositories.environments import (
 from repositories.eval_cache import EvaluationCache
 from repositories.flags import (
     FlagRow,
+    count_flags,
     find_flag,
     insert_flag,
     insert_variation,
@@ -79,6 +81,16 @@ def create_flag(
     with connection.transaction():
         project = _require_project(connection, project_key)
         require_protected_write(principal, has_protected_environment(connection, project.id))
+        if count_flags(connection, project.id) >= MAX_FLAGS_PER_PROJECT:
+            raise ValidationError(
+                "The project has too many flags.",
+                details=[
+                    {
+                        "field": "key",
+                        "message": "A project can have at most 500 flags.",
+                    }
+                ],
+            )
         try:
             flag_id = insert_flag(connection, project.id, key, name, description)
         except ConstraintViolation as exc:

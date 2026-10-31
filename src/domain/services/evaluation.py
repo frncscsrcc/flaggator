@@ -23,6 +23,7 @@ from domain.models.principal import KIND_MANAGEMENT, KIND_SDK, Principal
 from domain.services.evaluator import evaluate
 from domain.validation import (
     MAX_ATTRIBUTE_NAME_LENGTH,
+    MAX_CONTEXT_ARRAY_LENGTH,
     MAX_CONTEXT_ATTRIBUTES,
     MAX_CONTEXT_STRING_LENGTH,
     is_public_key,
@@ -231,6 +232,16 @@ def _require_attribute_value(value: object) -> None:
     if _is_scalar(value):
         return
     if isinstance(value, list):
+        if len(value) > MAX_CONTEXT_ARRAY_LENGTH:
+            raise ValidationError(
+                "The context is not valid.",
+                details=[
+                    {
+                        "field": "context.attributes",
+                        "message": "An attribute array must have at most 50 elements.",
+                    }
+                ],
+            )
         for item in value:
             if not _is_scalar(item):
                 raise ValidationError(

@@ -75,6 +75,36 @@ class NotFound(DomainError):
     code = "not_found"
 
 
+class TooManyRequests(DomainError):
+    """The caller has repeated a public route too quickly.
+
+    status is 429. Login uses this. The message does not say which
+    account was attempted.
+    """
+
+    status = 429
+    code = "rate_limited"
+
+    def __init__(self, message: str = "Too many attempts. Wait and try again.") -> None:
+        """Use the stable login message. details stays empty."""
+        super().__init__(message)
+
+
+class Unavailable(DomainError):
+    """The process is not accepting another request right now.
+
+    status is 503. The threaded server uses this when every worker slot
+    is taken.
+    """
+
+    status = 503
+    code = "unavailable"
+
+    def __init__(self, message: str = "The server is busy.") -> None:
+        """Use the stable busy message. details stays empty."""
+        super().__init__(message)
+
+
 class Conflict(DomainError):
     """A key already exists, or a targeting version is stale.
 

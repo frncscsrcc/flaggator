@@ -33,9 +33,18 @@ A missing or unknown token is 401. A known token used on a route it cannot call,
 
 | Method | Path | Behavior |
 | --- | --- | --- |
-| `POST` | `/v1/auth/login` | Body `{ "email", "password" }`. No bearer required. 200 returns `{ "access_token", "token_type": "bearer", "expires_in" }`. Wrong email or password is the same 401. A disabled user is 401. |
+| `POST` | `/v1/auth/login` | Body `{ "email", "password" }`. No bearer required. 200 returns `{ "access_token", "token_type": "bearer", "expires_in" }`. Wrong email, wrong password, a password outside 8–1024 characters, a disabled user, and an IdP-only user share the same 401. More than 10 attempts in 60 seconds from one client address is 429. |
 
 No refresh token in this milestone.
+
+### Management tokens
+
+Opaque management tokens are created by `python -m main bootstrap`, which prints the secret once. The API can list and revoke them. It cannot reveal a secret again.
+
+| Method | Path | Behavior |
+| --- | --- | --- |
+| `GET` | `/v1/management-tokens` | Active tokens as `{ "items": [ { "id", "prefix", "created_at" } ] }`. Requires `reader`. |
+| `DELETE` | `/v1/management-tokens/{tokenId}` | Revoke one token. `tokenId` is the decimal id. Requires `protected_writer`. 204. A missing or already revoked id is 404. The next request with that secret is 401. |
 
 ### Users
 
@@ -48,7 +57,7 @@ Users are global (not nested under a project). Creating and changing users requi
 | `GET` | `/v1/users/{userId}` | Fetch one user. |
 | `PATCH` | `/v1/users/{userId}` | Update name, password, roles, or disabled state. Email is immutable in this milestone. |
 
-`roles` is a list drawn from `reader`, `writer`, `protected_writer`. `protected_writer` without `writer` is stored but does not grant writes by itself. Passwords never appear in responses or audit JSON.
+`roles` is a list drawn from `reader`, `writer`, `protected_writer`. `protected_writer` without `writer` is stored but does not grant writes by itself. Adding `protected_writer` to a user who does not already hold it requires the caller to hold `protected_writer`. A plain `writer` may still grant `reader` and `writer`, and may remove `protected_writer`. Passwords never appear in responses or audit JSON.
 
 ## Controller rules
 

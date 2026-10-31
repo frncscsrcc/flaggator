@@ -7,9 +7,16 @@ import json
 import time
 
 from domain.clock import utc_timestamp
-from domain.errors import Conflict, ConstraintViolation, NotFound, Unauthenticated, ValidationError
+from domain.errors import (
+    Conflict,
+    ConstraintViolation,
+    Forbidden,
+    NotFound,
+    Unauthenticated,
+    ValidationError,
+)
 from domain.jwt import encode_hs256
-from domain.models.principal import ALLOWED_ROLES, Principal
+from domain.models.principal import ALLOWED_ROLES, ROLE_PROTECTED_WRITER, Principal
 from domain.models.users import (
     AccessToken,
     CreateUser,
@@ -19,7 +26,13 @@ from domain.models.users import (
     UserKeysetQuery,
     UserPage,
 )
-from domain.passwords import hash_password, require_password, verify_password
+from domain.passwords import (
+    burn_password_check,
+    hash_password,
+    password_is_checkable,
+    require_password,
+    verify_password,
+)
 from domain.services.access import require_reader, require_writer
 from domain.services.audit import record_change
 from domain.services.authentication import JwtSettings
@@ -53,6 +66,7 @@ def create_user(
     email = require_email(command.email)
     name = require_display_name(command.name, "name")
     roles = require_roles(command.roles)
+    _reject_new_protected_writer(principal, roles, ())
     if command.password is None:
         password_hash = None
     else:
@@ -151,6 +165,7 @@ def patch_user(
             raise NotFound("User does not exist.")
         next_name = current.name if name is None else name
         next_roles = current.roles if roles is None else roles
+        _reject_new_protected_writer(principal, next_roles, current.roles)
         next_hash = new_password_hash if replace_password else current.password_hash
         if command.disabled is None:
             next_disabled = current.disabled_at
@@ -213,8 +228,11 @@ def login(
         email = require_email(command.email)
     except ValidationError as exc:
         raise Unauthenticated(_LOGIN_MESSAGE) from exc
+    if not password_is_checkable(command.password):
+        raise Unauthenticated(_LOGIN_MESSAGE)
     user = find_enabled_user_by_email(connection, email)
     if user is None or user.password_hash is None:
+        burn_password_check(command.password)
         raise Unauthenticated(_LOGIN_MESSAGE)
     if not verify_password(command.password, user.password_hash):
         raise Unauthenticated(_LOGIN_MESSAGE)
@@ -316,6 +334,26 @@ def _to_user(row: UserRow) -> User:
         created_at=row.created_at,
         disabled_at=row.disabled_at,
     )
+
+
+def _reject_new_protected_writer(
+    principal: Principal,
+    roles: tuple[str, ...],
+    already: tuple[str, ...],
+) -> None:
+    """Raise Forbidden when roles newly includes protected_writer.
+
+    already is the roles the user already holds. An empty tuple means a
+    create. A caller who already holds protected_writer may grant it.
+    Does not read the database.
+    """
+    if ROLE_PROTECTED_WRITER not in roles:
+        return
+    if ROLE_PROTECTED_WRITER in already:
+        return
+    if ROLE_PROTECTED_WRITER in principal.roles:
+        return
+    raise Forbidden("A protected_writer role is required to grant protected_writer.")
 
 
 def _user_document(

@@ -14,6 +14,7 @@ from domain.services.audit import record_change
 from domain.validation import (
     MAX_CONTEXT_STRING_LENGTH,
     MAX_SEGMENT_SUBJECTS,
+    MAX_SEGMENTS_PER_ENVIRONMENT,
     is_public_key,
     require_display_name,
     require_page_limit,
@@ -27,6 +28,7 @@ from repositories.json_text import dump_json_text
 from repositories.projects import ProjectRow, find_project
 from repositories.segments import (
     SegmentRow,
+    count_segments,
     delete_segment,
     find_segment,
     insert_segment,
@@ -57,6 +59,16 @@ def create_segment(
     with connection.transaction():
         project, environment = _require_scope(connection, project_key, environment_key)
         require_protected_write(principal, environment.protected)
+        if count_segments(connection, environment.id) >= MAX_SEGMENTS_PER_ENVIRONMENT:
+            raise ValidationError(
+                "The environment has too many segments.",
+                details=[
+                    {
+                        "field": "key",
+                        "message": "An environment can have at most 200 segments.",
+                    }
+                ],
+            )
         try:
             insert_segment(connection, environment.id, key, name, subjects)
         except ConstraintViolation as exc:

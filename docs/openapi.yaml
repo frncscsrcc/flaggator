@@ -47,8 +47,10 @@ paths:
       security: []
       description: |
         Issues a local access JWT. No bearer token is required. Wrong email
-        or password, a disabled user, and an IdP-only user (no password)
-        share the same 401. FLAGGATOR_JWT_SECRET must be set.
+        or password, a password outside 8 to 1024 characters, a disabled
+        user, and an IdP-only user (no password) share the same 401.
+        FLAGGATOR_JWT_SECRET must be at least 32 bytes when set. More than
+        10 attempts in 60 seconds from one client address is 429.
       requestBody:
         required: true
         content:
@@ -66,6 +68,55 @@ paths:
           $ref: "#/components/responses/ValidationError"
         "401":
           $ref: "#/components/responses/Unauthenticated"
+        "405":
+          $ref: "#/components/responses/MethodNotAllowed"
+        "429":
+          $ref: "#/components/responses/RateLimited"
+        "500":
+          $ref: "#/components/responses/StorageError"
+  /v1/management-tokens:
+    get:
+      tags: [Auth]
+      summary: List management tokens
+      operationId: listManagementTokens
+      description: |
+        Active opaque management tokens. The secret is never returned.
+        Requires reader (a management token qualifies).
+      responses:
+        "200":
+          description: Active tokens ordered by id.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ManagementTokenPage"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "405":
+          $ref: "#/components/responses/MethodNotAllowed"
+        "500":
+          $ref: "#/components/responses/StorageError"
+  /v1/management-tokens/{tokenId}:
+    delete:
+      tags: [Auth]
+      summary: Revoke a management token
+      operationId: revokeManagementToken
+      description: |
+        Sets revoked_at. Requires protected_writer (a management token
+        qualifies). A missing or already revoked id is 404. The next use
+        of that secret is 401.
+      parameters:
+        - $ref: "#/components/parameters/ManagementTokenId"
+      responses:
+        "204":
+          description: Revoked. The body is an empty object.
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
         "405":
           $ref: "#/components/responses/MethodNotAllowed"
         "500":
@@ -101,7 +152,8 @@ paths:
       operationId: createUser
       description: |
         password may be omitted for an IdP-only user. roles is a non-empty
-        list drawn from reader, writer, and protected_writer.
+        list drawn from reader, writer, and protected_writer. Adding
+        protected_writer requires the caller to already hold that role.
       requestBody:
         required: true
         content:
@@ -1045,6 +1097,13 @@ components:
         minimum: 1
         maximum: 200
         default: 50
+    ManagementTokenId:
+      name: tokenId
+      in: path
+      required: true
+      description: Decimal id from the management token list. A prefix is 404.
+      schema:
+        type: string
     Cursor:
       name: cursor
       in: query
@@ -1121,6 +1180,17 @@ components:
               code: validation_error
               message: This route accepts GET.
               details: []
+    RateLimited:
+      description: Too many login attempts from this client address.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+          example:
+            error:
+              code: rate_limited
+              message: Too many attempts. Wait and try again.
+              details: []
     StorageError:
       description: The database failed. The message does not include driver text.
       content:
@@ -1133,6 +1203,27 @@ components:
               message: The database failed to complete the request.
               details: []
   schemas:
+    ManagementToken:
+      type: object
+      required: [id, prefix, created_at]
+      additionalProperties: false
+      properties:
+        id:
+          type: integer
+          minimum: 1
+        prefix:
+          type: string
+        created_at:
+          type: string
+    ManagementTokenPage:
+      type: object
+      required: [items]
+      additionalProperties: false
+      properties:
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/ManagementToken"
     Error:
       type: object
       required: [error]

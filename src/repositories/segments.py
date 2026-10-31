@@ -26,6 +26,24 @@ class SegmentRow:
     subjects: tuple[str, ...]
 
 
+def count_segments(connection: Connection, environment_id: int) -> int:
+    """Return how many segments the environment has.
+
+    Does not commit.
+    """
+    row = connection.execute(
+        """
+        SELECT COUNT(*) AS n
+          FROM segments
+         WHERE environment_id = ?
+        """,
+        (environment_id,),
+    ).fetchone()
+    if row is None:
+        return 0
+    return int(row["n"])
+
+
 def insert_segment(
     connection: Connection,
     environment_id: int,

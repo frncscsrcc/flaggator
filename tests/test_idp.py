@@ -79,6 +79,19 @@ class IdpTests(unittest.TestCase):
         self.assertEqual(status, "200 OK")
         self.assertEqual(body["items"], [])
 
+    def test_idp_numeric_sub_does_not_select_a_local_id(self) -> None:
+        """A JWKS token with sub equal to a local id still matches by email."""
+        self._insert_user("first@example.com", '["reader"]')
+        second = self._insert_user("second@example.com", '["writer"]')
+        token = self._idp_token(email="second@example.com", sub="1")
+        connection = self.database.connect()
+        try:
+            principal = authenticate(connection, f"Bearer {token}", self.jwt_settings)
+        finally:
+            connection.close()
+        self.assertEqual(principal.credential_id, second)
+        self.assertEqual(principal.roles, ("writer",))
+
     def test_idp_jwt_without_local_user_is_401(self) -> None:
         """A valid IdP signature with no local user is the same 401."""
         token = self._idp_token(email="missing@example.com", sub="nobody")

@@ -14,6 +14,7 @@ from domain.errors import Unauthenticated
 
 _MESSAGE = "A valid credential is required."
 _JWKS_ALGORITHMS = ("RS256", "RS384", "RS512", "ES256", "ES384", "ES512")
+_JWKS_TIMEOUT_SECONDS = 5
 _jwks_clients: dict[str, PyJWKClient] = {}
 
 
@@ -38,12 +39,13 @@ def verify_access_token(
     audience: str,
     jwks_url: str,
     now: int | None = None,
-) -> dict[str, Any]:
-    """Verify a local HS256 or IdP JWKS-signed JWT and return the payload.
+) -> tuple[dict[str, Any], str]:
+    """Verify a local HS256 or IdP JWKS-signed JWT.
 
-    Chooses the path from the unprotected header alg. HS256 needs secret.
-    RS*/ES* need a non-empty jwks_url. Raises Unauthenticated on any
-    failure. Does not log token or secret.
+    Returns the payload and the algorithm that verified it. Chooses the
+    path from the unprotected header alg. HS256 needs secret. RS*/ES*
+    need a non-empty jwks_url. Raises Unauthenticated on any failure.
+    Does not log token or secret.
     """
     if not looks_like_jwt(token):
         raise Unauthenticated(_MESSAGE)
@@ -53,9 +55,9 @@ def verify_access_token(
         raise Unauthenticated(_MESSAGE) from exc
     algorithm = header.get("alg")
     if algorithm == "HS256":
-        return verify_hs256(token, secret, issuer, audience, now=now)
+        return verify_hs256(token, secret, issuer, audience, now=now), "HS256"
     if algorithm in _JWKS_ALGORITHMS and jwks_url != "":
-        return verify_jwks(token, jwks_url, issuer, audience, now=now)
+        return verify_jwks(token, jwks_url, issuer, audience, now=now), str(algorithm)
     raise Unauthenticated(_MESSAGE)
 
 
@@ -163,6 +165,6 @@ def _jwks_client(url: str) -> PyJWKClient:
     """Return a process-cached PyJWKClient for url."""
     client = _jwks_clients.get(url)
     if client is None:
-        client = PyJWKClient(url, cache_keys=True)
+        client = PyJWKClient(url, cache_keys=True, timeout=_JWKS_TIMEOUT_SECONDS)
         _jwks_clients[url] = client
     return client

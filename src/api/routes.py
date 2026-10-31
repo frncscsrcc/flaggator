@@ -9,6 +9,7 @@ from api.audit import list_audit
 from api.environments import create_environment, list_environments, patch_environment
 from api.evaluation import evaluate_all, evaluate_one, read_config
 from api.flags import create_flag, get_flag, list_flags, patch_flag
+from api.management_tokens import list_management_tokens, revoke_management_token
 from api.health import get_health
 from api.projects import create_project, get_project, list_projects
 from api.request import Request, Response
@@ -154,6 +155,12 @@ def _management_route(
     if any(part == "" for part in parts[1:]):
         return route_not_found()
     session = _session(principal, connection)
+    if parts[2] == "management-tokens":
+        if len(parts) == 3:
+            return _management_tokens_collection(request, session[0], session[1])
+        if len(parts) == 4:
+            return _one_management_token(request, session[0], session[1], parts[3])
+        return route_not_found()
     if parts[2] == "users":
         if len(parts) == 3:
             return _users_collection(request, session[0], session[1])
@@ -233,6 +240,35 @@ def _projects_collection(
     if request.method == "POST":
         return create_project(principal, connection, request)
     return method_not_allowed("GET or POST")
+
+
+def _management_tokens_collection(
+    request: Request,
+    principal: Principal,
+    connection: Connection,
+) -> Response:
+    """List management tokens.
+
+    GET is the only method. Does not commit.
+    """
+    if request.method != "GET":
+        return method_not_allowed("GET")
+    return list_management_tokens(principal, connection)
+
+
+def _one_management_token(
+    request: Request,
+    principal: Principal,
+    connection: Connection,
+    token_id: str,
+) -> Response:
+    """Revoke one management token.
+
+    DELETE is the only method. Does not commit.
+    """
+    if request.method != "DELETE":
+        return method_not_allowed("DELETE")
+    return revoke_management_token(principal, connection, token_id)
 
 
 def _users_collection(

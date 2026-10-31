@@ -57,9 +57,9 @@ Opaque management tokens are created by `python -m main bootstrap`. It prints th
 
 ### JWT ([P13](decisions.md))
 
-- Locally issued tokens are signed with `FLAGGATOR_JWT_SECRET` (use at least 32 bytes for HS256). Issuer, audience, and lifetime come from `FLAGGATOR_JWT_ISSUER`, `FLAGGATOR_JWT_AUDIENCE`, and `FLAGGATOR_JWT_TTL_SECONDS` (default 3600).
-- An external IdP is configured with `FLAGGATOR_JWT_JWKS_URL` plus the same `FLAGGATOR_JWT_ISSUER` / `FLAGGATOR_JWT_AUDIENCE` used for claim checks. Tokens whose header `alg` is RS* or ES* are verified against that JWKS. Verification checks signature, `iss`, `aud`, and `exp`.
-- After verification, flaggator loads the local user that matches a decimal `sub` (local user id) or the `email` claim (normalized). Roles come from that row. No matching enabled user → 401. The IdP is not trusted to invent `protected_writer`.
+- Locally issued tokens are signed with `FLAGGATOR_JWT_SECRET`. A non-empty secret must be at least 32 bytes. An empty secret disables local login. Issuer, audience, and lifetime come from `FLAGGATOR_JWT_ISSUER`, `FLAGGATOR_JWT_AUDIENCE`, and `FLAGGATOR_JWT_TTL_SECONDS` (default 3600).
+- An external IdP is configured with `FLAGGATOR_JWT_JWKS_URL` plus the same `FLAGGATOR_JWT_ISSUER` / `FLAGGATOR_JWT_AUDIENCE` used for claim checks. Tokens whose header `alg` is RS* or ES* are verified against that JWKS. Verification checks signature, `iss`, `aud`, and `exp`. The JWKS fetch times out after 5 seconds.
+- After verification, roles come from the enabled local user row, not from JWT claims. An HS256 token this process signed selects that row by a decimal `sub` (the local user id). A JWKS token selects it by the normalized `email` claim, or by `sub` only when `sub` itself contains `@`. A numeric `sub` on an IdP token does not select a local id. No matching enabled user → 401. The IdP is not trusted to invent `protected_writer`.
 - Controllers never parse the bearer header; authentication builds a principal that carries kind, roles, and audit actor id.
 
 ## Roles and protected environments ([P14](decisions.md))
@@ -68,7 +68,7 @@ Opaque management tokens are created by `python -m main bootstrap`. It prints th
 | --- | --- |
 | `reader` | GET projects, environments, flags, targeting, audit |
 | `writer` | All `reader` rights, plus create/mutate on non-protected environments and project-level resources that do not target a protected environment |
-| `protected_writer` | Add-on only: together with `writer`, mutate protected environments and change the `protected` flag |
+| `protected_writer` | Add-on only: together with `writer`, mutate protected environments and change the `protected` flag. Also required to grant `protected_writer` to a user and to revoke an opaque management token. |
 
 An opaque management token is authorized as if it held every role. An SDK token has none of these roles.
 
@@ -84,7 +84,9 @@ Each environment has `protected` (default false). Changing `protected`, or writi
 | Flags GET, targeting GET | yes | yes | yes | yes | no |
 | Flags / targeting mutate | no | non-protected env only | yes | yes | no |
 | SDK token manage | no | non-protected env only | yes | yes | no |
-| Users manage | no | yes | yes | yes | no |
+| Users manage | no | yes, except granting `protected_writer` | yes | yes | no |
+| Management tokens GET | yes | yes | yes | yes | no |
+| Management tokens revoke | no | no | yes | yes | no |
 | Audit GET | yes | yes | yes | yes | no |
 | Evaluate / evaluate-all / evaluation-config | no | no | no | yes | own env |
 
@@ -143,6 +145,10 @@ Evaluation walks prerequisites with a visited set and a depth cap, specified in 
 | Attribute keys per context | 50 |
 | Attribute name length | 64 |
 | String attribute length | 1024 |
+| Clause string length | 1024 |
+| Context attribute array | 50 elements |
+| Flags per project | 500 |
+| Segments per environment | 200 |
 | Prerequisite depth | 10 |
 | Targets per configuration (total subjects) | 1000 |
 | Subjects per segment | 1000 |
@@ -162,11 +168,11 @@ Exceeding a limit is `ValidationError` (400), not a truncated write.
 
 ## Database
 
-**SQLite.** The file should be readable and writable only by the account that runs the process. The operator guide (when written) should state mode `0600` on the file and `0700` on its directory. A backup of the file is a backup of every flag and of credential hashes.
+**SQLite.** After each connect, and again after each commit, the process sets mode `0600` on the database file and on the `-wal` and `-shm` siblings when they exist. The parent directory mode is left to the operator (`0700` is appropriate). A backup of the file is a backup of every flag and of credential hashes.
 
 **MySQL.** The configuration holds a host, database name, user, and password. The password is a secret: it is not logged, not written to the audit log, and not returned by any API. The MySQL account used by the process needs rights on this schema only. A dump of the schema is a backup of every flag and of credential hashes.
 
-**Cache.** The evaluation bundle includes rule trees and rollout salts. The in-memory cache holds that inside the process. It does not hold bearer tokens, token hashes, or context attributes. Credential checks go to the database, so revocation is not delayed by a TTL ([Cache](cache.md)). A later Redis or Memcached holds the same bundles and should be treated as confidential as the database.
+**Cache.** The evaluation bundle includes rule trees and rollout salts. The in-memory cache holds that inside the process. It does not hold bearer tokens, token hashes, or context attributes. A fill that started before an invalidation does not write back over the delete: each key has a generation bumped on commit. Credential checks go to the database, so revocation is not delayed by a TTL ([Cache](cache.md)). A later Redis or Memcached holds the same bundles and should be treated as confidential as the database.
 
 ## Dependency policy
 
@@ -177,3 +183,7 @@ The default install uses the standard library plus JWT libraries: `sqlite3`, `ht
 MySQL adds PyMySQL as an optional extra ([P3](decisions.md)). It is imported only by the MySQL database module. The reason: the standard library has no MySQL driver. License: MIT.
 
 No ORM, no query builder, and no web framework are part of that policy ([A3](decisions.md), [A4](decisions.md)).
+
+## Audits
+
+Point-in-time reviews live in [Security audit](security_audit.md). The 2026-10-31 review is the first. Open findings and the remediation order are recorded there; this document stays the control baseline.

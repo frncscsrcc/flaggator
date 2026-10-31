@@ -23,6 +23,7 @@ from domain.services.access import require_protected_write, require_reader
 from domain.services.audit import record_change
 from domain.validation import (
     MAX_ATTRIBUTE_NAME_LENGTH,
+    MAX_CLAUSE_STRING_LENGTH,
     MAX_CLAUSES,
     MAX_CLAUSE_VALUES,
     MAX_RULES,
@@ -458,6 +459,8 @@ def _check_clause_value(operator: str, kind: str, value: object) -> None:
     if kind.endswith("string"):
         if not isinstance(value, str):
             _reject("rules", f"{operator} values must be strings.")
+        if len(value) > MAX_CLAUSE_STRING_LENGTH:
+            _reject("rules", "A clause string must be at most 1024 characters.")
         return
     if kind.endswith("number"):
         if isinstance(value, bool) or not isinstance(value, (int, float)) or not _finite(value):

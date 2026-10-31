@@ -170,6 +170,66 @@ def find_active_sdk_token_by_name(
     )
 
 
+@dataclass(frozen=True)
+class ManagementTokenRow:
+    """One active management token as a list shows it.
+
+    The secret and the hash are absent. prefix is the non-secret start
+    of the secret.
+    """
+
+    id: int
+    prefix: str
+    created_at: str
+
+
+def list_management_tokens(connection: Connection) -> list[ManagementTokenRow]:
+    """Return active management tokens, ordered by id.
+
+    Revoked rows are absent. Does not commit and does not return a secret.
+    """
+    rows = connection.execute(
+        """
+        SELECT id, prefix, created_at
+          FROM api_credentials
+         WHERE kind = ? AND revoked_at IS NULL
+         ORDER BY id
+        """,
+        (KIND_MANAGEMENT,),
+    ).fetchall()
+    return [
+        ManagementTokenRow(
+            id=int(row["id"]),
+            prefix=str(row["prefix"]),
+            created_at=str(row["created_at"]),
+        )
+        for row in rows
+    ]
+
+
+def revoke_management_token(
+    connection: Connection,
+    credential_id: int,
+    revoked_at: str,
+) -> int:
+    """Revoke one active management token.
+
+    Returns how many rows changed. Zero means the id is missing, already
+    revoked, or not a management token. Does not commit.
+    """
+    cursor = connection.execute(
+        """
+        UPDATE api_credentials
+           SET revoked_at = ?
+         WHERE id = ?
+           AND kind = ?
+           AND revoked_at IS NULL
+        """,
+        (revoked_at, credential_id, KIND_MANAGEMENT),
+    )
+    return cursor.rowcount
+
+
 def revoke_sdk_token(
     connection: Connection,
     credential_id: int,
