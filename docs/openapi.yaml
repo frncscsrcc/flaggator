@@ -1,7 +1,7 @@
 openapi: 3.0.3
 info:
   title: flaggator
-  version: 0.0.0
+  version: 1.0.0
   description: |
     HTTP API for the flaggator feature-flag service. This file lists the
     routes the process serves. docs/api.md is the design contract for routes
