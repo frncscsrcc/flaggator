@@ -1,7 +1,7 @@
 openapi: 3.0.3
 info:
   title: flaggator
-  version: 1.0.0
+  version: 1.1.0
   description: |
     HTTP API for the flaggator feature-flag service. This file lists the
     routes the process serves. docs/api.md is the design contract for routes
@@ -151,9 +151,9 @@ paths:
       summary: Create a user
       operationId: createUser
       description: |
-        password may be omitted for an IdP-only user. roles is a non-empty
-        list drawn from reader, writer, and protected_writer. Adding
-        protected_writer requires the caller to already hold that role.
+        Requires admin. password may be omitted for an IdP-only user. roles
+        is a non-empty list drawn from reader, writer, protected_writer, and
+        admin. An admin may assign any of those roles.
       requestBody:
         required: true
         content:
@@ -208,8 +208,9 @@ paths:
       summary: Patch a user
       operationId: patchUser
       description: |
-        Updates name, password, roles, and/or disabled. Email cannot change.
-        disabled true sets disabled_at; false clears it.
+        Requires admin. Updates name, password, roles, and/or disabled.
+        Email cannot change. disabled true sets disabled_at; false clears it.
+        An admin may assign any role.
       parameters:
         - $ref: "#/components/parameters/UserId"
       requestBody:
@@ -1375,7 +1376,7 @@ components:
           minimum: 1
     UserRole:
       type: string
-      enum: [reader, writer, protected_writer]
+      enum: [reader, writer, protected_writer, admin]
     User:
       type: object
       required: [id, email, name, roles, created_at, disabled_at]

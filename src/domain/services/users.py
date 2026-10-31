@@ -16,7 +16,7 @@ from domain.errors import (
     ValidationError,
 )
 from domain.jwt import encode_hs256
-from domain.models.principal import ALLOWED_ROLES, ROLE_PROTECTED_WRITER, Principal
+from domain.models.principal import ALLOWED_ROLES, ROLE_ADMIN, ROLE_PROTECTED_WRITER, Principal
 from domain.models.users import (
     AccessToken,
     CreateUser,
@@ -33,7 +33,7 @@ from domain.passwords import (
     require_password,
     verify_password,
 )
-from domain.services.access import require_reader, require_writer
+from domain.services.access import require_admin, require_reader
 from domain.services.audit import record_change
 from domain.services.authentication import JwtSettings
 from domain.validation import require_display_name, require_page_limit
@@ -62,11 +62,11 @@ def create_user(
     Raises Forbidden for an SDK token, ValidationError for a bad body, and
     Conflict when email already exists. password None stores a null hash.
     """
-    require_writer(principal)
+    require_admin(principal)
     email = require_email(command.email)
     name = require_display_name(command.name, "name")
     roles = require_roles(command.roles)
-    _reject_new_protected_writer(principal, roles, ())
+    _reject_new_grants(principal, roles, ())
     if command.password is None:
         password_hash = None
     else:
@@ -147,7 +147,7 @@ def patch_user(
     Raises Forbidden for an SDK token, NotFound when missing, and
     ValidationError for a bad body. Omitted fields stay unchanged.
     """
-    require_writer(principal)
+    require_admin(principal)
     name = None
     if command.name is not None:
         name = require_display_name(command.name, "name")
@@ -165,7 +165,7 @@ def patch_user(
             raise NotFound("User does not exist.")
         next_name = current.name if name is None else name
         next_roles = current.roles if roles is None else roles
-        _reject_new_protected_writer(principal, next_roles, current.roles)
+        _reject_new_grants(principal, next_roles, current.roles)
         next_hash = new_password_hash if replace_password else current.password_hash
         if command.disabled is None:
             next_disabled = current.disabled_at
@@ -310,7 +310,7 @@ def require_roles(roles: tuple[str, ...]) -> tuple[str, ...]:
                 details=[
                     {
                         "field": "roles",
-                        "message": "Each role must be reader, writer, or protected_writer.",
+                        "message": "Each role must be reader, writer, protected_writer, or admin.",
                     }
                 ],
             )
@@ -336,24 +336,32 @@ def _to_user(row: UserRow) -> User:
     )
 
 
-def _reject_new_protected_writer(
+def _reject_new_grants(
     principal: Principal,
     roles: tuple[str, ...],
     already: tuple[str, ...],
 ) -> None:
-    """Raise Forbidden when roles newly includes protected_writer.
+    """Raise Forbidden when roles newly includes a role the caller lacks.
 
     already is the roles the user already holds. An empty tuple means a
-    create. A caller who already holds protected_writer may grant it.
-    Does not read the database.
+    create. An admin may grant every role. Anyone else may grant
+    protected_writer or admin only when they already hold that role.
+    Removing either role is allowed. Does not read the database.
     """
-    if ROLE_PROTECTED_WRITER not in roles:
+    if ROLE_ADMIN in principal.roles:
         return
-    if ROLE_PROTECTED_WRITER in already:
-        return
-    if ROLE_PROTECTED_WRITER in principal.roles:
-        return
-    raise Forbidden("A protected_writer role is required to grant protected_writer.")
+    gated = (
+        (ROLE_PROTECTED_WRITER, "A protected_writer role is required to grant protected_writer."),
+        (ROLE_ADMIN, "An admin role is required to grant admin."),
+    )
+    for role, message in gated:
+        if role not in roles:
+            continue
+        if role in already:
+            continue
+        if role in principal.roles:
+            continue
+        raise Forbidden(message)
 
 
 def _user_document(

@@ -13,11 +13,13 @@ KIND_USER = "user"
 ROLE_READER = "reader"
 ROLE_WRITER = "writer"
 ROLE_PROTECTED_WRITER = "protected_writer"
+ROLE_ADMIN = "admin"
 
 MANAGEMENT_ROLES: tuple[str, ...] = (
     ROLE_READER,
     ROLE_WRITER,
     ROLE_PROTECTED_WRITER,
+    ROLE_ADMIN,
 )
 
 ALLOWED_ROLES = frozenset(MANAGEMENT_ROLES)

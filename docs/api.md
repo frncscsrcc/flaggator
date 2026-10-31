@@ -48,7 +48,7 @@ Opaque management tokens are created by `python -m main bootstrap`, which prints
 
 ### Users
 
-Users are global (not nested under a project). Creating and changing users requires `writer` (or an opaque management token). Listing and fetching require `reader` or `writer`.
+Users are global (not nested under a project). Creating and changing users requires `admin` (or an opaque management token, which holds every role). `admin` may also read and mutate flags, including protected environments, and may assign any role.
 
 | Method | Path | Behavior |
 | --- | --- | --- |
@@ -57,7 +57,7 @@ Users are global (not nested under a project). Creating and changing users requi
 | `GET` | `/v1/users/{userId}` | Fetch one user. |
 | `PATCH` | `/v1/users/{userId}` | Update name, password, roles, or disabled state. Email is immutable in this milestone. |
 
-`roles` is a list drawn from `reader`, `writer`, `protected_writer`. `protected_writer` without `writer` is stored but does not grant writes by itself. Adding `protected_writer` to a user who does not already hold it requires the caller to hold `protected_writer`. A plain `writer` may still grant `reader` and `writer`, and may remove `protected_writer`. Passwords never appear in responses or audit JSON.
+`roles` is a list drawn from `reader`, `writer`, `protected_writer`, `admin`. `protected_writer` without `writer` is stored but does not grant writes by itself. `admin` may assign any of these roles. Passwords never appear in responses or audit JSON.
 
 ## Controller rules
 

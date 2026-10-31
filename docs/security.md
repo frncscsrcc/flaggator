@@ -31,7 +31,7 @@ Kinds ([P8](decisions.md)):
 | Kind | Bound to | May do |
 | --- | --- | --- |
 | Opaque management token | The whole server | Every management and evaluation route. Break-glass / bootstrap / automation. Not a person in a UI. |
-| User (JWT) | The whole server, limited by roles | Management routes allowed by `reader` / `writer` / `protected_writer`. Does not call evaluate or evaluation-config. |
+| User (JWT) | The whole server, limited by roles | Management routes allowed by `reader` / `writer` / `protected_writer` / `admin`. Does not call evaluate or evaluation-config. |
 | SDK token | One environment | Evaluate and read evaluation config for that environment only |
 
 ### Opaque tokens (management and SDK)
@@ -59,16 +59,17 @@ Opaque management tokens are created by `python -m main bootstrap`. It prints th
 
 - Locally issued tokens are signed with `FLAGGATOR_JWT_SECRET`. A non-empty secret must be at least 32 bytes. An empty secret disables local login. Issuer, audience, and lifetime come from `FLAGGATOR_JWT_ISSUER`, `FLAGGATOR_JWT_AUDIENCE`, and `FLAGGATOR_JWT_TTL_SECONDS` (default 3600).
 - An external IdP is configured with `FLAGGATOR_JWT_JWKS_URL` plus the same `FLAGGATOR_JWT_ISSUER` / `FLAGGATOR_JWT_AUDIENCE` used for claim checks. Tokens whose header `alg` is RS* or ES* are verified against that JWKS. Verification checks signature, `iss`, `aud`, and `exp`. The JWKS fetch times out after 5 seconds.
-- After verification, roles come from the enabled local user row, not from JWT claims. An HS256 token this process signed selects that row by a decimal `sub` (the local user id). A JWKS token selects it by the normalized `email` claim, or by `sub` only when `sub` itself contains `@`. A numeric `sub` on an IdP token does not select a local id. No matching enabled user → 401. The IdP is not trusted to invent `protected_writer`.
+- After verification, roles come from the enabled local user row, not from JWT claims. An HS256 token this process signed selects that row by a decimal `sub` (the local user id). A JWKS token selects it by the normalized `email` claim, or by `sub` only when `sub` itself contains `@`. A numeric `sub` on an IdP token does not select a local id. No matching enabled user → 401. The IdP is not trusted to invent `protected_writer` or `admin`.
 - Controllers never parse the bearer header; authentication builds a principal that carries kind, roles, and audit actor id.
 
 ## Roles and protected environments ([P14](decisions.md))
 
 | Role | Grants |
 | --- | --- |
-| `reader` | GET projects, environments, flags, targeting, audit |
+| `reader` | GET projects, environments, flags, targeting, audit, users |
 | `writer` | All `reader` rights, plus create/mutate on non-protected environments and project-level resources that do not target a protected environment |
 | `protected_writer` | Add-on only: together with `writer`, mutate protected environments and change the `protected` flag. Also required to grant `protected_writer` to a user and to revoke an opaque management token. |
+| `admin` | Every management action: read, write, protected environments, users, and granting any role. Does not evaluate. |
 
 An opaque management token is authorized as if it held every role. An SDK token has none of these roles.
 
@@ -76,29 +77,30 @@ Each environment has `protected` (default false). Changing `protected`, or writi
 
 ### Authorization matrix (management plane)
 
-| Family | reader | writer | writer + protected_writer | opaque management | SDK |
-| --- | --- | --- | --- | --- | --- |
-| Health | yes (no auth) | yes | yes | yes | yes |
-| Projects / environments GET | yes | yes | yes | yes | no |
-| Projects / environments write, `protected` toggle | no | non-protected only | yes | yes | no |
-| Flags GET, targeting GET | yes | yes | yes | yes | no |
-| Flags / targeting mutate | no | non-protected env only | yes | yes | no |
-| SDK token manage | no | non-protected env only | yes | yes | no |
-| Users manage | no | yes, except granting `protected_writer` | yes | yes | no |
-| Management tokens GET | yes | yes | yes | yes | no |
-| Management tokens revoke | no | no | yes | yes | no |
-| Audit GET | yes | yes | yes | yes | no |
-| Evaluate / evaluate-all / evaluation-config | no | no | no | yes | own env |
+| Family | reader | writer | writer + protected_writer | admin | opaque management | SDK |
+| --- | --- | --- | --- | --- | --- | --- |
+| Health | yes (no auth) | yes | yes | yes | yes | yes |
+| Projects / environments GET | yes | yes | yes | yes | yes | no |
+| Projects / environments write, `protected` toggle | no | non-protected only | yes | yes | yes | no |
+| Flags GET, targeting GET | yes | yes | yes | yes | yes | no |
+| Flags / targeting mutate | no | non-protected env only | yes | yes | yes | no |
+| SDK token manage | no | non-protected env only | yes | yes | yes | no |
+| Users GET | yes | yes | yes | yes | yes | no |
+| Users create / patch | no | no | no | yes | yes | no |
+| Management tokens GET | yes | yes | yes | yes | yes | no |
+| Management tokens revoke | no | no | yes | yes | yes | no |
+| Audit GET | yes | yes | yes | yes | yes | no |
+| Evaluate / evaluate-all / evaluation-config | no | no | no | no | yes | own env |
 
-“Non-protected only” means: if the target environment has `protected=true`, the caller also needs `protected_writer`.
+“Non-protected only” means: if the target environment has `protected=true`, the caller also needs `protected_writer`. `admin` satisfies reader, writer, and protected_writer, and may assign any role. A user JWT still cannot evaluate.
 
 ## Authorization placement
 
 Authentication attaches a principal before the controller runs.
 
-**Coarse gate** (route authorize): SDK tokens may continue only on evaluation paths; user JWTs need at least `reader` or `writer` for management paths; opaque management tokens may continue.
+**Coarse gate** (route authorize): SDK tokens may continue only on evaluation paths; user JWTs need at least `reader`, `writer`, or `admin` for management paths; opaque management tokens may continue.
 
-**Fine checks** (domain services): `require_reader`, `require_writer`, and `require_protected_write(environment)` read `principal.roles` and, when needed, `environment.protected` from SQL. The controller does not load whether an environment is protected. Controllers do not call repositories ([Architecture](architecture.md)).
+**Fine checks** (domain services): `require_reader`, `require_writer`, `require_admin`, and `require_protected_write(environment)` read `principal.roles` and, when needed, `environment.protected` from SQL. The controller does not load whether an environment is protected. Controllers do not call repositories ([Architecture](architecture.md)).
 
 Other rules:
 

@@ -85,7 +85,7 @@ A repository function does not commit or roll back. The service opens the transa
 
 ### P8. Credential kinds
 
-An **SDK token** is bound to one environment and may evaluate and read that environment's configuration. An opaque **management token** may do everything on the management and evaluation planes; it is break-glass / bootstrap / automation, not the model for a person using a future UI. A **user** authenticates with a JWT and holds global roles (`reader`, `writer`, `protected_writer`). Detail in [Security](security.md) and [P14](#p14-users-roles-and-protected-environments).
+An **SDK token** is bound to one environment and may evaluate and read that environment's configuration. An opaque **management token** may do everything on the management and evaluation planes; it is break-glass / bootstrap / automation, not the model for a person using a future UI. A **user** authenticates with a JWT and holds global roles (`reader`, `writer`, `protected_writer`, `admin`). Detail in [Security](security.md) and [P14](#p14-users-roles-and-protected-environments).
 
 ### P9. One variation model
 
@@ -144,7 +144,7 @@ The process accepts a standard JWT on the `Authorization: Bearer` header in addi
 Two issuance / verify paths:
 
 - **Local:** `POST /v1/auth/login` with email and password returns an access JWT signed HS256 by flaggator (`FLAGGATOR_JWT_SECRET`). No refresh token in this milestone.
-- **External IdP:** `FLAGGATOR_JWT_JWKS_URL` plus issuer and audience. RS*/ES* tokens are verified against that JWKS. The IdP proves identity. **Roles come from the matching local user row** (HS256: decimal `sub`; JWKS: normalized `email`, or `sub` only when it contains `@`), not from trusting the IdP to mint `protected_writer`. A numeric IdP `sub` does not select a local id. A JWT with no matching enabled local user is 401.
+- **External IdP:** `FLAGGATOR_JWT_JWKS_URL` plus issuer and audience. RS*/ES* tokens are verified against that JWKS. The IdP proves identity. **Roles come from the matching local user row** (HS256: decimal `sub`; JWKS: normalized `email`, or `sub` only when it contains `@`), not from trusting the IdP to mint `protected_writer` or `admin`. A numeric IdP `sub` does not select a local id. A JWT with no matching enabled local user is 401.
 
 Minimum claims on a locally issued token: `sub`, `roles`, `iss`, `aud`, `exp`, `iat`. Controllers and domain services receive a principal and do not parse the header. Signing and verification use **PyJWT** (MIT) with the `crypto` extra for JWKS ([Security](security.md) dependency policy). A static verifying key (without JWKS) is not implemented yet.
 
@@ -159,9 +159,10 @@ Roles (closed set):
 | `reader` | Management GETs: projects, environments, flags, targeting, audit. Does not evaluate. |
 | `writer` | Creates and mutates non-protected resources. Implies read. |
 | `protected_writer` | Add-on: with `writer`, may mutate environments marked `protected` and may change the `protected` flag itself. Alone, it does not grant write. |
+| `admin` | Every management action, including granting any role. Does not evaluate. |
 
 An opaque management token is treated as having every role. An SDK token has no management roles.
 
 Each environment has `protected` (default false). Promoting or clearing it requires `writer` and `protected_writer`. Writes that target a protected environment (targeting, SDK tokens for that environment, and similar) require the same pair.
 
-Authorization is hybrid: a coarse path gate rejects SDK tokens on management routes and rejects users without any management role; fine checks (`require_reader`, `require_writer`, `require_protected_write`) live in domain services next to the action, because only SQL knows whether an environment is protected. Detail and the route matrix are in [Security](security.md) and [API](api.md).
+Authorization is hybrid: a coarse path gate rejects SDK tokens on management routes and rejects users without `reader`, `writer`, or `admin`; fine checks (`require_reader`, `require_writer`, `require_admin`, `require_protected_write`) live in domain services next to the action, because only SQL knows whether an environment is protected. Detail and the route matrix are in [Security](security.md) and [API](api.md).

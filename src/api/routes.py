@@ -28,6 +28,7 @@ from domain.models.principal import (
     KIND_MANAGEMENT,
     KIND_SDK,
     KIND_USER,
+    ROLE_ADMIN,
     ROLE_READER,
     ROLE_WRITER,
     Principal,
@@ -76,7 +77,8 @@ def authorize(request: Request, principal: Principal) -> None:
 
     A management token may continue. An SDK token may continue only for
     evaluate, evaluate-all, and evaluation-config. A user JWT may continue
-    on management paths when it has reader or writer; it cannot evaluate.
+    on management paths when it has reader, writer, or admin; it cannot
+    evaluate.
     Fine role checks stay in the services. Does not commit.
     """
     if principal.kind == KIND_MANAGEMENT:
@@ -88,7 +90,11 @@ def authorize(request: Request, principal: Principal) -> None:
     if principal.kind == KIND_USER:
         if _sdk_may_read(request) or request.path in _EVALUATION_PATHS:
             raise Forbidden("The credential may not call this route.")
-        if ROLE_READER in principal.roles or ROLE_WRITER in principal.roles:
+        if (
+            ROLE_READER in principal.roles
+            or ROLE_WRITER in principal.roles
+            or ROLE_ADMIN in principal.roles
+        ):
             return
         raise Forbidden("The credential may not call this route.")
     raise Forbidden("The credential may not call this route.")

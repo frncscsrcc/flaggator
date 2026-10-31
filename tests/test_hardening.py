@@ -162,8 +162,8 @@ class LoginAndTokenTests(unittest.TestCase):
         self.assertEqual(limited_status, "429 Too Many Requests")
         self.assertEqual(limited["error"]["code"], "rate_limited")
 
-    def test_writer_cannot_grant_protected_writer(self) -> None:
-        """A writer who lacks protected_writer cannot add that role."""
+    def test_only_admin_manages_users(self) -> None:
+        """Writer cannot create users. Admin can grant every role and write flags."""
         self.call(
             "POST",
             "/v1/users",
@@ -174,25 +174,119 @@ class LoginAndTokenTests(unittest.TestCase):
                 "roles": ["reader", "writer"],
             },
         )
-        logged_in = self.call(
-            "POST",
-            "/v1/auth/login",
-            {"email": "writer@example.com", "password": "password1"},
-            authorization=None,
-        )[1]
-        status, body = self.call(
+        writer = self._login("writer@example.com")
+        denied_status, denied = self.call(
             "POST",
             "/v1/users",
             {
                 "email": "other@example.com",
                 "name": "Other",
                 "password": "password1",
+                "roles": ["reader"],
+            },
+            authorization="Bearer " + writer,
+        )
+        self.call(
+            "POST",
+            "/v1/users",
+            {
+                "email": "admin@example.com",
+                "name": "Admin",
+                "password": "password1",
+                "roles": ["admin"],
+            },
+        )
+        admin = self._login("admin@example.com")
+        created_status, created = self.call(
+            "POST",
+            "/v1/users",
+            {
+                "email": "reader@example.com",
+                "name": "Reader",
+                "password": "password1",
+                "roles": ["reader", "writer"],
+            },
+            authorization="Bearer " + admin,
+        )
+        grant_status, grant = self.call(
+            "POST",
+            "/v1/users",
+            {
+                "email": "prot@example.com",
+                "name": "Prot",
+                "password": "password1",
                 "roles": ["reader", "writer", "protected_writer"],
             },
-            authorization="Bearer " + logged_in["access_token"],
+            authorization="Bearer " + admin,
         )
-        self.assertEqual(status, "403 Forbidden")
-        self.assertIn("protected_writer", body["error"]["message"])
+        self.call(
+            "POST",
+            "/v1/users",
+            {
+                "email": "boss@example.com",
+                "name": "Boss",
+                "password": "password1",
+                "roles": ["reader", "admin"],
+            },
+        )
+        boss = self._login("boss@example.com")
+        granted_status, _granted = self.call(
+            "POST",
+            "/v1/users",
+            {
+                "email": "second@example.com",
+                "name": "Second",
+                "password": "password1",
+                "roles": ["reader", "admin"],
+            },
+            authorization="Bearer " + boss,
+        )
+        list_status, _listed = self.call("GET", "/v1/users", authorization="Bearer " + admin)
+        reader_list_status, _reader_list = self.call(
+            "GET",
+            "/v1/users",
+            authorization="Bearer " + self._login("reader@example.com"),
+        )
+        patch_status, _patched = self.call(
+            "PATCH",
+            f"/v1/users/{created['id']}",
+            {"name": "Renamed"},
+            authorization="Bearer " + writer,
+        )
+        project_status, _project = self.call(
+            "POST",
+            "/v1/projects",
+            {"key": "shop", "name": "Shop"},
+            authorization="Bearer " + admin,
+        )
+        environment_status, environment = self.call(
+            "POST",
+            "/v1/projects/shop/environments",
+            {"key": "prod", "name": "Production", "protected": True},
+            authorization="Bearer " + admin,
+        )
+        self.assertEqual(denied_status, "403 Forbidden")
+        self.assertIn("admin", denied["error"]["message"])
+        self.assertEqual(created_status, "201 Created")
+        self.assertEqual(grant_status, "201 Created")
+        self.assertEqual(grant["roles"], ["reader", "writer", "protected_writer"])
+        self.assertEqual(granted_status, "201 Created")
+        self.assertEqual(list_status, "200 OK")
+        self.assertEqual(reader_list_status, "200 OK")
+        self.assertEqual(patch_status, "403 Forbidden")
+        self.assertEqual(project_status, "201 Created")
+        self.assertEqual(environment_status, "201 Created")
+        self.assertIs(environment["protected"], True)
+
+    def _login(self, email: str) -> str:
+        """Return a local access token for email. Password is password1."""
+        _status, body = self.call(
+            "POST",
+            "/v1/auth/login",
+            {"email": email, "password": "password1"},
+            authorization=None,
+        )
+        return str(body["access_token"])
 
     def test_list_and_revoke_management_token(self) -> None:
         """List shows the prefix. Delete makes the secret fail as unknown."""
