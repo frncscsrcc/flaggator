@@ -24,13 +24,15 @@ class Environment:
     """One environment as the API shows it.
 
     key is unique inside its project. name is the display name. protected
-    is true when writes need protected_writer. The SDK secret is not a
-    field here.
+    is true when writes need protected_writer. client_id is the opaque
+    browser id, or None until an operator issues one. The SDK secret is
+    not a field here.
     """
 
     key: str
     name: str
     protected: bool
+    client_id: str | None
 
 
 @dataclass(frozen=True)

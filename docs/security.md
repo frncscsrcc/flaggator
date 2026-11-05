@@ -91,8 +91,11 @@ Each environment has `protected` (default false). Changing `protected`, or writi
 | Management tokens revoke | no | no | yes | yes | yes | no |
 | Audit GET | yes | yes | yes | yes | yes | no |
 | Evaluate / evaluate-all / evaluation-config | no | no | no | no | yes | own env |
+| Issue or rotate `client_id` | no | non-protected env | yes | yes | yes | no |
+| Change flag `public` | no | project with no protected env | yes | yes | yes | no |
+| `POST /v1/client-evaluate` | yes (no auth) | yes | yes | yes | yes | yes |
 
-“Non-protected only” means: if the target environment has `protected=true`, the caller also needs `protected_writer`. `admin` satisfies reader, writer, and protected_writer, and may assign any role. A user JWT still cannot evaluate.
+“Non-protected only” means: if the target environment has `protected=true`, the caller also needs `protected_writer`. `admin` satisfies reader, writer, and protected_writer, and may assign any role. A user JWT still cannot evaluate. Issuing a `client_id` for a protected environment needs `protected_writer`. Changing a flag's `public` bit needs `protected_writer` when the project has any protected environment, because that decision would be visible there too. Changing the flag's name or description stays a writer action.
 
 ## Authorization placement
 
@@ -122,11 +125,19 @@ Regular expressions are not a v1 operator. If they are added later, patterns nee
 
 ## Context data
 
-Evaluation reads the context and discards it when the request ends. The service does not write subjects or attributes to the database as part of evaluation.
+Evaluation reads the context and discards it when the request ends. The service does not write subjects or attributes to the database as part of evaluation. `POST /v1/client-evaluate` follows the same rule.
 
 Audit records store flag configuration before and after a management write. They do not store evaluation contexts.
 
 Request logs, if added, must not include the `Authorization` header, the request body of evaluate calls, or SDK secrets. v1 can run without access logs. If they are turned on, the adapter logs method, path, status, and duration.
+
+## Public flags
+
+A flag is private unless `public` is true. `POST /v1/client-evaluate` takes an environment `client_id` and a context, and returns only the public flags' key, value, and variation index. It does not return rules, salts, segment members, or the reason for a decision. Private flags are still evaluated when a public flag lists them as prerequisites, and they are omitted from the response.
+
+`client_id` is a random value from `secrets.token_urlsafe`, stored in clear text, and shown on environment reads. It is not a hash of the project name. Rotating it makes the previous value 404. A browser cannot keep a secret, so anyone who has the id can probe public flags with chosen contexts. That is the accepted exposure of a public flag. Private flags and evaluation-config stay behind a bearer token.
+
+The route is limited per client address, separately from login: `FLAGGATOR_CLIENT_EVAL_LIMIT` (default 60) requests in `FLAGGATOR_CLIENT_EVAL_WINDOW_SECONDS` (default 60). An empty address shares the bucket `unknown`. Over the limit is 429 `rate_limited`. The map lives in one process. An unknown `client_id` is the same 404 whether or not the id once existed.
 
 ## Optimistic concurrency
 

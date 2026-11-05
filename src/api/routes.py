@@ -1,12 +1,13 @@
 """Choose a controller for a request, and say who may call the path.
 
-GET /health is the only route that does not need a credential. This module
+GET /health, POST /v1/auth/login, and POST /v1/client-evaluate do not need a
+credential. This module
 does not parse tokens and does not execute SQL. Management routes receive
 the connection the adapter opened.
 """
 
 from api.audit import list_audit
-from api.environments import create_environment, list_environments, patch_environment
+from api.environments import create_environment, issue_client_id, list_environments, patch_environment
 from api.evaluation import evaluate_all, evaluate_one, read_config
 from api.flags import create_flag, get_flag, list_flags, patch_flag
 from api.management_tokens import list_management_tokens, revoke_management_token
@@ -37,7 +38,7 @@ from repositories.db import Connection
 from repositories.eval_cache import EvaluationCache
 
 _EVALUATION_PATHS = ("/v1/evaluate", "/v1/evaluate-all")
-_PUBLIC_PATHS = frozenset({"/health", "/v1/auth/login"})
+_PUBLIC_PATHS = frozenset({"/health", "/v1/auth/login", "/v1/client-evaluate"})
 
 
 def dispatch(
@@ -63,7 +64,7 @@ def dispatch(
 
 
 def requires_credential(request: Request) -> bool:
-    """Return False for health and login.
+    """Return False for health, login, and client evaluation.
 
     Other methods on those paths still reach the method check without a
     credential. Every other path needs a principal. Does not read the
@@ -194,6 +195,8 @@ def _management_route(
         return _one_environment(request, session[0], session[1], project_key, parts[5])
     if len(parts) == 6 and parts[4] == "flags":
         return _one_flag(request, session[0], session[1], evaluation_cache, project_key, parts[5])
+    if len(parts) == 7 and parts[4] == "environments" and parts[6] == "client-id":
+        return _client_id(request, session[0], session[1], project_key, parts[5])
     if len(parts) == 7 and parts[4] == "environments" and parts[6] == "segments":
         return _segments(request, session[0], session[1], project_key, parts[5])
     if len(parts) == 7 and parts[4] == "environments" and parts[6] == "sdk-tokens":
@@ -308,6 +311,22 @@ def _one_user(
     if request.method == "PATCH":
         return patch_user(principal, connection, request, user_id)
     return method_not_allowed("GET or PATCH")
+
+
+def _client_id(
+    request: Request,
+    principal: Principal,
+    connection: Connection,
+    project_key: str,
+    environment_key: str,
+) -> Response:
+    """Issue or rotate the client id for one environment.
+
+    POST is the only method. Does not commit.
+    """
+    if request.method != "POST":
+        return method_not_allowed("POST")
+    return issue_client_id(principal, connection, project_key, environment_key)
 
 
 def _environments_collection(

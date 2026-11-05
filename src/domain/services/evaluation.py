@@ -29,7 +29,12 @@ from domain.validation import (
     is_public_key,
 )
 from repositories.db import Connection
-from repositories.environments import EnvironmentScope, find_environment, find_environment_scope
+from repositories.environments import (
+    EnvironmentScope,
+    find_environment,
+    find_environment_by_client_id,
+    find_environment_scope,
+)
 from repositories.eval_cache import EvaluationCache
 from repositories.projects import find_project
 
@@ -92,6 +97,46 @@ def evaluate_all(
     for flag in document["flags"]:
         if not isinstance(flag, dict):
             raise StorageError()
+        flag_key = flag.get("key")
+        if not isinstance(flag_key, str):
+            raise StorageError()
+        decisions.append(evaluate(flag_key, definitions, checked))
+    return decisions
+
+
+def evaluate_public(
+    connection: Connection,
+    evaluation_cache: EvaluationCache,
+    client_id: str,
+    context: Context,
+) -> list[Decision]:
+    """Return decisions for the public flags of the environment client_id names.
+
+    Evaluation uses the whole bundle, so a private prerequisite still
+    changes the public flag's value. The caller drops reason, rule id, and
+    version. An unknown client_id is NotFound. Does not store the context
+    and does not check a credential.
+    """
+    checked = _checked_context(context)
+    if client_id == "" or len(client_id) > 64:
+        raise NotFound("Client does not exist.")
+    scope = find_environment_by_client_id(connection, client_id)
+    if scope is None:
+        raise NotFound("Client does not exist.")
+    document = evaluation_cache.load_document(
+        connection,
+        scope.project_id,
+        scope.environment_id,
+        scope.project_key,
+        scope.environment_key,
+    )
+    definitions = _definitions(document)
+    decisions: list[Decision] = []
+    for flag in document["flags"]:
+        if not isinstance(flag, dict):
+            raise StorageError()
+        if flag.get("public") is not True:
+            continue
         flag_key = flag.get("key")
         if not isinstance(flag_key, str):
             raise StorageError()

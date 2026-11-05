@@ -18,7 +18,12 @@ from domain.models.flag import (
 )
 from domain.models.catalog import KeysetQuery
 from domain.models.principal import Principal
-from domain.services.access import require_protected_write, require_reader, require_writer
+from domain.services.access import (
+    require_protected_write,
+    require_protected_writer,
+    require_reader,
+    require_writer,
+)
 from domain.services.audit import record_change
 from domain.validation import (
     MAX_FLAGS_PER_PROJECT,
@@ -92,7 +97,7 @@ def create_flag(
                 ],
             )
         try:
-            flag_id = insert_flag(connection, project.id, key, name, description)
+            flag_id = insert_flag(connection, project.id, key, name, description, command.public)
         except ConstraintViolation as exc:
             raise Conflict("Flag key already exists.") from exc
         for index, text in enumerate(texts):
@@ -189,14 +194,17 @@ def patch_flag(
         current = _load_flag(connection, project.id, flag_key)
         stored_name = current.name if name is None else name
         stored_description = current.description if description is None else description
+        stored_public = current.public if command.public is None else command.public
+        if stored_public != current.public and has_protected_environment(connection, project.id):
+            require_protected_writer(principal)
         tail = _appended_variations(current.variations, command.variations)
         row = find_flag(connection, project.id, current.key)
         if row is None:
             raise NotFound("Flag does not exist.")
-        update_flag_text(connection, row.id, stored_name, stored_description)
+        update_flag_text(connection, row.id, stored_name, stored_description, stored_public)
         for offset, text in enumerate(tail):
             insert_variation(connection, row.id, len(current.variations) + offset, text)
-        if tail:
+        if tail or stored_public != current.public:
             evaluation_cache.invalidate_project(
                 connection,
                 project.key,
@@ -247,6 +255,7 @@ def _load_flag(connection: Connection, project_id: int, flag_key: str) -> Flag:
         key=row.key,
         name=row.name,
         description=row.description,
+        public=row.public,
         variations=variations,
         environments=environments,
     )
@@ -294,6 +303,7 @@ def _summary(connection: Connection, row: FlagRow, environment_id: int | None) -
         key=row.key,
         name=row.name,
         description=row.description,
+        public=row.public,
         variations=variations,
         environment=environment,
     )
@@ -379,6 +389,7 @@ def _audit_document(flag: Flag) -> str:
             "description": flag.description,
             "key": flag.key,
             "name": flag.name,
+            "public": flag.public,
             "variations": list(flag.variations),
         },
         ensure_ascii=False,

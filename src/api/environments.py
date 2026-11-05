@@ -58,6 +58,26 @@ def patch_environment(
     return Response(status=200, body=_environment_document(environment))
 
 
+def issue_client_id(
+    principal: Principal,
+    connection: Connection,
+    project_key: str,
+    environment_key: str,
+) -> Response:
+    """Issue or rotate the client id and return the stored environment.
+
+    The id is in the response. There is no separate secret. Domain failures
+    propagate. Does not commit; the service does.
+    """
+    environment = environment_service.issue_client_id(
+        connection,
+        principal,
+        project_key,
+        environment_key,
+    )
+    return Response(status=200, body=_environment_document(environment))
+
+
 def list_environments(
     principal: Principal,
     connection: Connection,
@@ -146,4 +166,5 @@ def _environment_document(environment: Environment) -> dict:
         "key": environment.key,
         "name": environment.name,
         "protected": environment.protected,
+        "client_id": environment.client_id,
     }

@@ -22,6 +22,7 @@ class FlagRow:
     key: str
     name: str
     description: str
+    public: bool
 
 
 def insert_flag(
@@ -30,18 +31,20 @@ def insert_flag(
     key: str,
     name: str,
     description: str,
+    public: bool,
 ) -> int:
     """Insert one flag and return its new id.
 
-    Raises ConstraintViolation when that project already has key. Does not
-    commit, does not insert variations, and does not write an audit row.
+    public is stored as 0 or 1. Raises ConstraintViolation when that project
+    already has key. Does not commit, does not insert variations, and does
+    not write an audit row.
     """
     cursor = connection.execute(
         """
-        INSERT INTO flags (project_id, `key`, name, description)
-        VALUES (?, ?, ?, ?)
+        INSERT INTO flags (project_id, `key`, name, description, public)
+        VALUES (?, ?, ?, ?, ?)
         """,
-        (project_id, key, name, description),
+        (project_id, key, name, description, _bit(public)),
     )
     return cursor.last_insert_id
 
@@ -51,8 +54,9 @@ def update_flag_text(
     flag_id: int,
     name: str,
     description: str,
+    public: bool,
 ) -> None:
-    """Replace the name and description of one flag.
+    """Replace the name, description, and public bit of one flag.
 
     Does not change the key, the variations, or any environment config.
     Does not commit.
@@ -61,10 +65,11 @@ def update_flag_text(
         """
         UPDATE flags
            SET name = ?,
-               description = ?
+               description = ?,
+               public = ?
          WHERE id = ?
         """,
-        (name, description, flag_id),
+        (name, description, _bit(public), flag_id),
     )
 
 
@@ -75,7 +80,7 @@ def find_flag(connection: Connection, project_id: int, key: str) -> FlagRow | No
     """
     row = connection.execute(
         """
-        SELECT id, `key`, name, description
+        SELECT id, `key`, name, description, public
           FROM flags
          WHERE project_id = ? AND `key` = ?
         """,
@@ -118,7 +123,7 @@ def list_flags(
     if after_key is None:
         rows = connection.execute(
             """
-            SELECT id, `key`, name, description
+            SELECT id, `key`, name, description, public
               FROM flags
              WHERE project_id = ?
              ORDER BY `key`
@@ -129,7 +134,7 @@ def list_flags(
     else:
         rows = connection.execute(
             """
-            SELECT id, `key`, name, description
+            SELECT id, `key`, name, description, public
               FROM flags
              WHERE project_id = ?
                AND `key` > ?
@@ -189,4 +194,12 @@ def _flag_row(row: Mapping[str, object]) -> FlagRow:
         key=str(row["key"]),
         name=str(row["name"]),
         description=str(row["description"]),
+        public=int(row["public"]) == 1,
     )
+
+
+def _bit(value: bool) -> int:
+    """Return 1 when value is true and 0 otherwise."""
+    if value:
+        return 1
+    return 0

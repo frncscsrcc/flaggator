@@ -15,6 +15,7 @@ from repositories.eval_cache import EvaluationCache
 
 _EVALUATE_FIELDS = ("project_key", "environment_key", "flag_key", "context", "default")
 _EVALUATE_ALL_FIELDS = ("project_key", "environment_key", "context")
+_CLIENT_FIELDS = ("client_id", "context")
 
 
 def evaluate_one(
@@ -84,6 +85,61 @@ def read_config(
         environment_key,
     )
     return Response(status=200, body=document)
+
+
+def evaluate_public(
+    connection: Connection,
+    evaluation_cache: EvaluationCache,
+    request: Request,
+) -> Response:
+    """Evaluate the public flags for a client id.
+
+    No credential is required. The body lists key, value, and
+    variation_index only. Returns 200. Does not commit.
+    """
+    client_id, context = _public_command(request)
+    decisions = evaluation_service.evaluate_public(
+        connection,
+        evaluation_cache,
+        client_id,
+        context,
+    )
+    flags = [_public_document(item) for item in decisions]
+    return Response(status=200, body={"flags": flags})
+
+
+def _public_command(request: Request) -> tuple[str, Context]:
+    """Return the client id and context.
+
+    Both fields are required. Raises ValidationError for a wrong shape.
+    Does not read the database.
+    """
+    body = read_json_object(request)
+    details = _unknown(body, set(_CLIENT_FIELDS))
+    client_id = body.get("client_id")
+    if "client_id" not in body:
+        details.append({"field": "client_id", "message": "This field is required."})
+    elif not isinstance(client_id, str):
+        details.append({"field": "client_id", "message": "This field must be a string."})
+    if "context" not in body:
+        details.append({"field": "context", "message": "This field is required."})
+    if details:
+        raise ValidationError("The request body has the wrong fields.", details=details)
+    if not isinstance(client_id, str):
+        raise ValidationError("The request body has the wrong fields.", details=details)
+    return client_id, _context(body["context"])
+
+
+def _public_document(decision: Decision) -> dict:
+    """Return the public fields of one decision.
+
+    reason, rule_id, and version are omitted. Does not read the database.
+    """
+    return {
+        "key": decision.flag_key,
+        "value": decision.value,
+        "variation_index": decision.variation_index,
+    }
 
 
 def _evaluate_command(

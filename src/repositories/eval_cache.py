@@ -157,6 +157,7 @@ def _document(
                 "off_variation": flag.off_variation,
                 "prerequisites": flag.prerequisites,
                 "rules": flag.rules,
+                "public": flag.public,
                 "targets": flag.targets,
                 "variations": list(flag.variations),
                 "version": flag.version,

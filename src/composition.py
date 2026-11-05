@@ -48,6 +48,8 @@ class Settings:
     jwt_audience: str
     jwt_ttl_seconds: int
     jwt_jwks_url: str
+    client_eval_limit: int
+    client_eval_window_seconds: int
     migrations_directory: Path
 
     def __repr__(self) -> str:
@@ -60,7 +62,9 @@ class Settings:
             f"cache={self.cache!r}, bind_host={self.bind_host!r}, "
             f"bind_port={self.bind_port!r}, eval_ttl_seconds={self.eval_ttl_seconds!r}, "
             f"jwt_issuer={self.jwt_issuer!r}, jwt_audience={self.jwt_audience!r}, "
-            f"jwt_ttl_seconds={self.jwt_ttl_seconds!r}, jwt_jwks_url={self.jwt_jwks_url!r})"
+            f"jwt_ttl_seconds={self.jwt_ttl_seconds!r}, jwt_jwks_url={self.jwt_jwks_url!r}, "
+            f"client_eval_limit={self.client_eval_limit!r}, "
+            f"client_eval_window_seconds={self.client_eval_window_seconds!r})"
         )
 
 
@@ -113,6 +117,14 @@ def load_settings(environment: Mapping[str, str] | None = None) -> Settings:
             "jwt_ttl_seconds",
         ),
         jwt_jwks_url=source.get("FLAGGATOR_JWT_JWKS_URL", ""),
+        client_eval_limit=_positive_int(
+            source.get("FLAGGATOR_CLIENT_EVAL_LIMIT", "60"),
+            "client_eval_limit",
+        ),
+        client_eval_window_seconds=_positive_int(
+            source.get("FLAGGATOR_CLIENT_EVAL_WINDOW_SECONDS", "60"),
+            "client_eval_window_seconds",
+        ),
         migrations_directory=default_migrations_directory(),
     )
 
@@ -181,6 +193,8 @@ def prepare(settings: Settings) -> Runtime:
                 ttl_seconds=settings.jwt_ttl_seconds,
                 jwks_url=settings.jwt_jwks_url,
             ),
+            client_eval_limit=settings.client_eval_limit,
+            client_eval_window_seconds=settings.client_eval_window_seconds,
         ),
     )
 

@@ -4,6 +4,7 @@ SQL for the environments table lives here. Functions do not commit and do
 not check the principal.
 """
 
+from collections.abc import Mapping
 from dataclasses import dataclass
 
 from domain.models.catalog import Environment
@@ -15,12 +16,14 @@ class EnvironmentRow:
     """An environment plus the id the next statement in this use case needs.
 
     The id is not an API field. key, name, and protected match the columns.
+    client_id is null until an operator issues one.
     """
 
     id: int
     key: str
     name: str
     protected: bool
+    client_id: str | None
 
 
 def insert_environment(
@@ -83,7 +86,7 @@ def find_environment(
     """
     row = connection.execute(
         """
-        SELECT id, `key`, name, protected
+        SELECT id, `key`, name, protected, client_id
           FROM environments
          WHERE project_id = ? AND `key` = ?
         """,
@@ -91,11 +94,40 @@ def find_environment(
     ).fetchone()
     if row is None:
         return None
+    return _environment_row(row)
+
+
+def set_client_id(connection: Connection, environment_id: int, client_id: str) -> None:
+    """Store client_id on one environment, replacing any previous value.
+
+    Raises ConstraintViolation when another environment already has that
+    id. Does not commit.
+    """
+    connection.execute(
+        """
+        UPDATE environments
+           SET client_id = ?
+         WHERE id = ?
+        """,
+        (client_id, environment_id),
+    )
+
+
+def _environment_row(row: Mapping[str, object]) -> EnvironmentRow:
+    """Map one environments row into an EnvironmentRow.
+
+    client_id stays None when the column is null. Does not read another table.
+    """
+    raw_client_id = row["client_id"]
+    client_id = None
+    if raw_client_id is not None:
+        client_id = str(raw_client_id)
     return EnvironmentRow(
         id=int(row["id"]),
         key=str(row["key"]),
         name=str(row["name"]),
         protected=int(row["protected"]) == 1,
+        client_id=client_id,
     )
 
 
@@ -131,6 +163,36 @@ def find_environment_scope(
          WHERE environments.id = ?
         """,
         (environment_id,),
+    ).fetchone()
+    if row is None:
+        return None
+    return EnvironmentScope(
+        project_id=int(row["project_id"]),
+        project_key=str(row["project_key"]),
+        environment_id=int(row["environment_id"]),
+        environment_key=str(row["environment_key"]),
+    )
+
+
+def find_environment_by_client_id(
+    connection: Connection,
+    client_id: str,
+) -> EnvironmentScope | None:
+    """Return the environment that owns client_id.
+
+    Returns None when no row has that id. Does not commit.
+    """
+    row = connection.execute(
+        """
+        SELECT environments.id AS environment_id,
+               environments.`key` AS environment_key,
+               projects.id AS project_id,
+               projects.`key` AS project_key
+          FROM environments
+          JOIN projects ON projects.id = environments.project_id
+         WHERE environments.client_id = ?
+        """,
+        (client_id,),
     ).fetchone()
     if row is None:
         return None
@@ -209,7 +271,7 @@ def list_environments(
     if after_key is None:
         rows = connection.execute(
             """
-            SELECT `key`, name, protected
+            SELECT `key`, name, protected, client_id
               FROM environments
              WHERE project_id = ?
              ORDER BY `key`
@@ -220,7 +282,7 @@ def list_environments(
     else:
         rows = connection.execute(
             """
-            SELECT `key`, name, protected
+            SELECT `key`, name, protected, client_id
               FROM environments
              WHERE project_id = ?
                AND `key` > ?
@@ -234,6 +296,7 @@ def list_environments(
             key=str(row["key"]),
             name=str(row["name"]),
             protected=int(row["protected"]) == 1,
+            client_id=None if row["client_id"] is None else str(row["client_id"]),
         )
         for row in rows
     ]

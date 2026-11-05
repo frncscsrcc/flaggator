@@ -1,7 +1,7 @@
 openapi: 3.0.3
 info:
   title: flaggator
-  version: 1.1.0
+  version: 1.2.0
   description: |
     HTTP API for the flaggator feature-flag service. This file lists the
     routes the process serves. docs/api.md is the design contract for routes
@@ -457,6 +457,36 @@ paths:
                 $ref: "#/components/schemas/Environment"
         "400":
           $ref: "#/components/responses/ValidationError"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "405":
+          $ref: "#/components/responses/MethodNotAllowed"
+        "500":
+          $ref: "#/components/responses/StorageError"
+  /v1/projects/{projectKey}/environments/{environmentKey}/client-id:
+    post:
+      tags: [Environments]
+      summary: Issue or rotate the client id
+      operationId: issueClientId
+      description: |
+        Creates an opaque client id, or replaces the current one. The previous
+        id stops working. The id is returned in clear text because a browser
+        will send it. A writer may do this for an environment that is not
+        protected. A protected environment also needs protected_writer.
+      parameters:
+        - $ref: "#/components/parameters/ProjectKey"
+        - $ref: "#/components/parameters/EnvironmentKey"
+      responses:
+        "200":
+          description: The environment, including the new client id.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Environment"
         "401":
           $ref: "#/components/responses/Unauthenticated"
         "403":
@@ -1038,6 +1068,46 @@ paths:
           $ref: "#/components/responses/MethodNotAllowed"
         "500":
           $ref: "#/components/responses/StorageError"
+  /v1/client-evaluate:
+    post:
+      tags: [Evaluation]
+      summary: Evaluate public flags for a browser
+      operationId: clientEvaluate
+      security: []
+      description: |
+        No bearer token. client_id selects the environment. The server
+        evaluates that environment's bundle, including private flags used as
+        prerequisites, and returns only flags with public true. Each item is
+        key, value, and variation_index, ordered by key. Rules, salts, segment
+        members, reason, rule_id, and version are omitted. An unknown
+        client_id is 404. A known environment with no public flags is 200 and
+        an empty list. The context is not stored. More than
+        FLAGGATOR_CLIENT_EVAL_LIMIT requests (default 60) in
+        FLAGGATOR_CLIENT_EVAL_WINDOW_SECONDS (default 60) from one client
+        address is 429. The limit is per process.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ClientEvaluate"
+      responses:
+        "200":
+          description: Public flag decisions. Empty when the environment has none.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ClientEvaluation"
+        "400":
+          $ref: "#/components/responses/ValidationError"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "405":
+          $ref: "#/components/responses/MethodNotAllowed"
+        "429":
+          $ref: "#/components/responses/RateLimited"
+        "500":
+          $ref: "#/components/responses/StorageError"
 components:
   securitySchemes:
     bearerAuth:
@@ -1182,7 +1252,7 @@ components:
               message: This route accepts GET.
               details: []
     RateLimited:
-      description: Too many login attempts from this client address.
+      description: Too many attempts on a public route from this client address.
       content:
         application/json:
           schema:
@@ -1451,7 +1521,7 @@ components:
           type: boolean
     Environment:
       type: object
-      required: [key, name, protected]
+      required: [key, name, protected, client_id]
       additionalProperties: false
       properties:
         key:
@@ -1461,6 +1531,12 @@ components:
         protected:
           type: boolean
           description: When true, writes need writer and protected_writer.
+        client_id:
+          type: string
+          nullable: true
+          description: |
+            Opaque id a browser sends to client-evaluate. Null until an
+            operator issues one. Not a secret.
     EnvironmentPage:
       type: object
       required: [items, next_cursor]
@@ -1773,7 +1849,7 @@ components:
           minimum: 1
     Flag:
       type: object
-      required: [key, name, description, variations, environments]
+      required: [key, name, description, public, variations, environments]
       properties:
         key:
           $ref: "#/components/schemas/PublicKey"
@@ -1782,6 +1858,9 @@ components:
         description:
           type: string
           description: May be empty. At most 65535 bytes.
+        public:
+          type: boolean
+          description: When true, client-evaluate may return this flag's decision.
         variations:
           type: array
           minItems: 2
@@ -1794,7 +1873,7 @@ components:
             $ref: "#/components/schemas/FlagConfig"
     FlagSummary:
       type: object
-      required: [key, name, description, variations]
+      required: [key, name, description, public, variations]
       properties:
         key:
           $ref: "#/components/schemas/PublicKey"
@@ -1802,6 +1881,8 @@ components:
           $ref: "#/components/schemas/DisplayName"
         description:
           type: string
+        public:
+          type: boolean
         variations:
           type: array
           items:
@@ -1837,6 +1918,10 @@ components:
           maxItems: 20
           items:
             $ref: "#/components/schemas/VariationValue"
+        public:
+          type: boolean
+          default: false
+          description: Omitting this field stores false.
     FlagPatch:
       type: object
       minProperties: 1
@@ -1853,6 +1938,41 @@ components:
           description: The full ordered list. It must start with the stored variations.
           items:
             $ref: "#/components/schemas/VariationValue"
+        public:
+          type: boolean
+          description: Replaces the stored bit. Turning it on in a project that has a protected environment needs protected_writer.
+    ClientEvaluate:
+      type: object
+      required: [client_id, context]
+      additionalProperties: false
+      properties:
+        client_id:
+          type: string
+          minLength: 1
+          maxLength: 64
+        context:
+          $ref: "#/components/schemas/Context"
+    ClientEvaluation:
+      type: object
+      required: [flags]
+      additionalProperties: false
+      properties:
+        flags:
+          type: array
+          items:
+            $ref: "#/components/schemas/PublicFlagDecision"
+    PublicFlagDecision:
+      type: object
+      required: [key, value, variation_index]
+      additionalProperties: false
+      properties:
+        key:
+          $ref: "#/components/schemas/PublicKey"
+        value:
+          $ref: "#/components/schemas/VariationValue"
+        variation_index:
+          type: integer
+          minimum: 0
     EmptyObject:
       type: object
       additionalProperties: false

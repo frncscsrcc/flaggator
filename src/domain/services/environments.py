@@ -5,8 +5,9 @@ already in the project. With no flags, that loop inserts nothing.
 """
 
 import json
+import secrets
 
-from domain.errors import Conflict, ConstraintViolation, NotFound, ValidationError
+from domain.errors import Conflict, ConstraintViolation, NotFound, StorageError, ValidationError
 from domain.models.catalog import (
     CreateEnvironment,
     Environment,
@@ -21,8 +22,10 @@ from domain.validation import is_public_key, require_display_name, require_page_
 from repositories.db import Connection
 from repositories.environments import (
     find_environment,
+    find_environment_by_client_id,
     insert_environment,
     list_environments,
+    set_client_id,
     update_environment,
 )
 from repositories.flag_configs import insert_disabled_config, list_flag_ids
@@ -75,7 +78,7 @@ def create_environment(
             None,
             _environment_document(key, name, protected),
         )
-    return Environment(key=key, name=name, protected=protected)
+    return Environment(key=key, name=name, protected=protected, client_id=None)
 
 
 def patch_environment(
@@ -112,6 +115,7 @@ def patch_environment(
                 key=current.key,
                 name=current.name,
                 protected=current.protected,
+                client_id=current.client_id,
             )
         before = _environment_document(current.key, current.name, current.protected)
         update_environment(connection, current.id, next_name, next_protected)
@@ -126,7 +130,58 @@ def patch_environment(
             before,
             after,
         )
-    return Environment(key=current.key, name=next_name, protected=next_protected)
+    return Environment(
+        key=current.key,
+        name=next_name,
+        protected=next_protected,
+        client_id=current.client_id,
+    )
+
+
+def issue_client_id(
+    connection: Connection,
+    principal: Principal,
+    project_key: str,
+    environment_key: str,
+) -> Environment:
+    """Issue or rotate the opaque client id for one environment.
+
+    A protected environment needs protected_writer. The previous id stops
+    working. The new id is returned in clear text. Raises NotFound when
+    the project or environment is absent, and Forbidden when the principal
+    may not write it.
+    """
+    if not is_public_key(project_key) or not is_public_key(environment_key):
+        raise NotFound("Environment does not exist.")
+    with connection.transaction():
+        project = find_project(connection, project_key)
+        if project is None:
+            raise NotFound("Environment does not exist.")
+        current = find_environment(connection, project.id, environment_key)
+        if current is None:
+            raise NotFound("Environment does not exist.")
+        require_protected_write(principal, current.protected)
+        client_id = _unused_client_id(connection)
+        try:
+            set_client_id(connection, current.id, client_id)
+        except ConstraintViolation as exc:
+            raise StorageError() from exc
+        record_change(
+            connection,
+            principal,
+            "environment.client_id",
+            project.key,
+            current.key,
+            None,
+            _client_id_document(current.client_id),
+            _client_id_document(client_id),
+        )
+    return Environment(
+        key=current.key,
+        name=current.name,
+        protected=current.protected,
+        client_id=client_id,
+    )
 
 
 def list_environments_page(
@@ -172,6 +227,31 @@ def _checked_query(query: KeysetQuery) -> KeysetQuery:
             details=[{"field": "cursor", "message": "Send the cursor from a previous page."}],
         )
     return KeysetQuery(limit=limit, after_key=query.after_key)
+
+
+def _unused_client_id(connection: Connection) -> str:
+    """Return a client id that no environment currently stores.
+
+    A collision on insert is still possible and becomes StorageError.
+    Does not write.
+    """
+    for _attempt in range(3):
+        candidate = secrets.token_urlsafe(32)
+        if find_environment_by_client_id(connection, candidate) is None:
+            return candidate
+    raise StorageError()
+
+
+def _client_id_document(client_id: str | None) -> str:
+    """Return the audit JSON for a client id.
+
+    The id is not a secret. Does not read the database.
+    """
+    return json.dumps(
+        {"client_id": client_id},
+        sort_keys=True,
+        separators=(",", ":"),
+    )
 
 
 def _environment_document(key: str, name: str, protected: bool) -> str:

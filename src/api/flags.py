@@ -14,8 +14,8 @@ from domain.services import flags as flag_service
 from repositories.db import Connection
 from repositories.eval_cache import EvaluationCache
 
-_CREATE_FIELDS = ("key", "name", "description", "variations")
-_PATCH_FIELDS = ("name", "description", "variations")
+_CREATE_FIELDS = ("key", "name", "description", "variations", "public")
+_PATCH_FIELDS = ("name", "description", "variations", "public")
 
 
 def create_flag(
@@ -114,6 +114,7 @@ def _create_command(request: Request) -> CreateFlag:
         details.append({"field": "variations", "message": "This field is required."})
     elif not isinstance(body["variations"], list):
         details.append({"field": "variations", "message": "This field must be a list."})
+    public = _optional_bool(body, "public", details, default=False)
     details.extend(_unknown_details(body, set(_CREATE_FIELDS)))
     if details:
         raise ValidationError("The request body has the wrong fields.", details=details)
@@ -124,6 +125,7 @@ def _create_command(request: Request) -> CreateFlag:
         key=body["key"],
         name=body["name"],
         description=body["description"],
+        public=public,
         variations=tuple(raw_variations),
     )
 
@@ -143,7 +145,7 @@ def _patch_command(request: Request) -> PatchFlag:
         details.append(
             {
                 "field": "body",
-                "message": "Send a name, a description, or variations.",
+                "message": "Send a name, a description, variations, or public.",
             }
         )
     for field in ("name", "description"):
@@ -151,6 +153,7 @@ def _patch_command(request: Request) -> PatchFlag:
             details.append({"field": field, "message": "This field must be a string."})
     if "variations" in body and not isinstance(body["variations"], list):
         details.append({"field": "variations", "message": "This field must be a list."})
+    public = _optional_bool(body, "public", details, default=None)
     details.extend(_unknown_details(body, set(_PATCH_FIELDS) | {"key"}))
     if details:
         raise ValidationError("The request body has the wrong fields.", details=details)
@@ -160,7 +163,7 @@ def _patch_command(request: Request) -> PatchFlag:
         variations = tuple(body["variations"])
     else:
         variations = None
-    return PatchFlag(name=name, description=description, variations=variations)
+    return PatchFlag(name=name, description=description, variations=variations, public=public)
 
 
 def _string_details(body: dict, fields: tuple[str, ...]) -> list[dict[str, str]]:
@@ -189,6 +192,26 @@ def _unknown_details(body: dict, allowed: set[str]) -> list[dict[str, str]]:
     return details
 
 
+def _optional_bool(
+    body: dict,
+    field: str,
+    details: list[dict[str, str]],
+    default: bool | None,
+) -> bool | None:
+    """Return a boolean field, or default when it was omitted.
+
+    Appends a detail when the field is present and not a boolean. Does not
+    read the database.
+    """
+    if field not in body:
+        return default
+    value = body[field]
+    if not isinstance(value, bool):
+        details.append({"field": field, "message": "This field must be a boolean."})
+        return default
+    return value
+
+
 def _flag_document(flag: Flag) -> dict:
     """Return the JSON object for one flag and its environment configurations.
 
@@ -198,6 +221,7 @@ def _flag_document(flag: Flag) -> dict:
         "key": flag.key,
         "name": flag.name,
         "description": flag.description,
+        "public": flag.public,
         "variations": list(flag.variations),
         "environments": [_config_document(item) for item in flag.environments],
     }
@@ -230,6 +254,7 @@ def _summary_document(item: FlagSummary) -> dict:
         "key": item.key,
         "name": item.name,
         "description": item.description,
+        "public": item.public,
         "variations": list(item.variations),
     }
     if item.environment is not None:

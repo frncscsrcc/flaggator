@@ -32,7 +32,7 @@ class MigrationTests(unittest.TestCase):
                 ).fetchall()
             finally:
                 connection.close()
-        self.assertEqual([row["id"] for row in rows], ["0001"])
+        self.assertEqual([row["id"] for row in rows], ["0001", "0002"])
         self.assertEqual(projects, [])
 
     def test_a_failing_script_is_not_recorded(self) -> None:
@@ -62,3 +62,53 @@ class MigrationTests(unittest.TestCase):
             split_sql(script),
             ["INSERT INTO projects (`key`, name) VALUES ('a;b', 'Shop')"],
         )
+
+    def test_0002_upgrades_a_database_that_already_has_0001(self) -> None:
+        """An existing flag stays private and an existing environment has no client id."""
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            only_first = root / "migrations"
+            only_first.mkdir()
+            source = default_migrations_directory()
+            for name in ("0001_init.sqlite.sql", "0001_init.mysql.sql"):
+                (only_first / name).write_text((source / name).read_text(encoding="utf-8"), encoding="utf-8")
+            database = SqliteDatabase(str(root / "test.db"))
+            apply_migrations(database, only_first)
+            connection = database.connect()
+            try:
+                with connection.transaction():
+                    connection.execute(
+                        "INSERT INTO projects (`key`, name) VALUES ('shop', 'Shop')"
+                    )
+                    project = connection.execute(
+                        "SELECT id FROM projects WHERE `key` = 'shop'"
+                    ).fetchone()
+                    connection.execute(
+                        """
+                        INSERT INTO environments (project_id, `key`, name, protected)
+                        VALUES (?, 'prod', 'Prod', 0)
+                        """,
+                        (int(project["id"]),),
+                    )
+                    connection.execute(
+                        """
+                        INSERT INTO flags (project_id, `key`, name, description)
+                        VALUES (?, 'banner', 'Banner', '')
+                        """,
+                        (int(project["id"]),),
+                    )
+            finally:
+                connection.close()
+            apply_migrations(database, source)
+            connection = database.connect()
+            try:
+                flag = connection.execute("SELECT public FROM flags").fetchone()
+                environment = connection.execute("SELECT client_id FROM environments").fetchone()
+                rows = connection.execute(
+                    "SELECT id FROM schema_migrations ORDER BY id"
+                ).fetchall()
+            finally:
+                connection.close()
+        self.assertEqual(int(flag["public"]), 0)
+        self.assertIsNone(environment["client_id"])
+        self.assertEqual([row["id"] for row in rows], ["0001", "0002"])

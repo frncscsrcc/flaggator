@@ -1,6 +1,6 @@
 [project]
 name = "flaggator"
-version = "1.1.0"
+version = "1.2.0"
 description = "A locally deployable, API-first feature-flag service."
 requires-python = ">=3.11"
 readme = "README.md"

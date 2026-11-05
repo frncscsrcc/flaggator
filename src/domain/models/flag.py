@@ -37,6 +37,7 @@ class Flag:
     key: str
     name: str
     description: str
+    public: bool
     variations: tuple[object, ...]
     environments: tuple[FlagConfig, ...]
 
@@ -65,6 +66,7 @@ class FlagSummary:
     key: str
     name: str
     description: str
+    public: bool
     variations: tuple[object, ...]
     environment: FlagConfigSummary | None
 
@@ -91,6 +93,7 @@ class CreateFlag:
     key: str
     name: str
     description: str
+    public: bool
     variations: tuple[object, ...]
 
 
@@ -100,8 +103,10 @@ class PatchFlag:
 
     A None field was omitted and must be left as stored. variations, when
     set, is the full ordered list the client sent, not only the new tail.
+    public, when set, replaces the stored bit.
     """
 
     name: str | None
     description: str | None
     variations: tuple[object, ...] | None
+    public: bool | None

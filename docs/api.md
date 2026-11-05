@@ -121,11 +121,12 @@ Base path for catalog resources: `/v1/projects`. Authorization uses the role mat
 
 | Method | Path | Behavior |
 | --- | --- | --- |
-| `POST` | `/v1/projects/{projectKey}/environments` | Create `{ "key", "name", "protected"? }`. `protected` defaults to `false`. Response is 201 and `{ "key", "name", "protected" }`. Creating an environment does not copy targeting from another environment. Flags exist at project level; the new environment starts with each existing flag disabled, off variation `0`, and fallthrough variation `0`. Setting `protected` true on create requires `writer` and `protected_writer`. |
+| `POST` | `/v1/projects/{projectKey}/environments` | Create `{ "key", "name", "protected"? }`. `protected` defaults to `false`. Response is 201 and `{ "key", "name", "protected", "client_id" }`. `client_id` is null until issued. Creating an environment does not copy targeting from another environment. Flags exist at project level; the new environment starts with each existing flag disabled, off variation `0`, and fallthrough variation `0`. Setting `protected` true on create requires `writer` and `protected_writer`. |
 | `GET` | `/v1/projects/{projectKey}/environments` | List environments in the project. An unknown project is 404. |
 | `PATCH` | `/v1/projects/{projectKey}/environments/{environmentKey}` | Update `name` and/or `protected`. Changing `protected` requires `writer` and `protected_writer`. |
+| `POST` | `/v1/projects/{projectKey}/environments/{environmentKey}/client-id` | Issue or rotate the opaque `client_id`. The previous value stops working. A protected environment requires `writer` and `protected_writer`. |
 
-The response for an environment includes its key, name, and `protected`. It does not include the SDK token secret. SDK token issuance is a separate action so listing environments cannot leak secrets. A list response uses `next_cursor` null when the page is the last one. Mutating targeting or SDK tokens for a protected environment requires `writer` and `protected_writer`.
+The response for an environment includes its key, name, `protected`, and `client_id`. `client_id` is null until an operator issues one, and it is not a secret: a browser will send it. The response does not include the SDK token secret. SDK token issuance is a separate action so listing environments cannot leak secrets. A list response uses `next_cursor` null when the page is the last one. Mutating targeting or SDK tokens for a protected environment requires `writer` and `protected_writer`.
 
 ### SDK tokens
 
@@ -155,16 +156,16 @@ A segment is a set of subjects in one environment. Targets cite its `key`. `name
 
 | Method | Path | Behavior |
 | --- | --- | --- |
-| `POST` | `/v1/projects/{projectKey}/flags` | Create a flag and its variations. Body includes `key`, `name`, `description`, and `variations` (at least two JSON values). Initializes a disabled configuration in every existing environment. |
+| `POST` | `/v1/projects/{projectKey}/flags` | Create a flag and its variations. Body includes `key`, `name`, `description`, and `variations` (at least two JSON values). `public` is optional and defaults to `false`. Initializes a disabled configuration in every existing environment. |
 | `GET` | `/v1/projects/{projectKey}/flags` | List flags. Each item includes the variation list and, if a query `environment` is present, that environment's configuration summary. |
 | `GET` | `/v1/projects/{projectKey}/flags/{flagKey}` | Fetch the flag, variations, and every environment configuration. |
-| `PATCH` | `/v1/projects/{projectKey}/flags/{flagKey}` | Update `name` and `description`. Append variations. Cannot change `key`. Cannot remove or reorder variations in v1. |
+| `PATCH` | `/v1/projects/{projectKey}/flags/{flagKey}` | Update `name`, `description`, and `public`. Append variations. Cannot change `key`. Cannot remove or reorder variations in v1. |
 
-A flag response is `{ "key", "name", "description", "variations", "environments" }`. `variations` is the ordered JSON values; the index is the position, starting at 0. Each environment entry is `{ "key", "enabled", "off_variation", "fallthrough", "rules", "targets", "prerequisites", "version" }`. Create returns 201 with this document. Fetch and patch return 200 with it.
+A flag response is `{ "key", "name", "description", "public", "variations", "environments" }`. `public` is false unless an operator sets it. `variations` is the ordered JSON values; the index is the position, starting at 0. Each environment entry is `{ "key", "enabled", "off_variation", "fallthrough", "rules", "targets", "prerequisites", "version" }`. Create returns 201 with this document. Fetch and patch return 200 with it.
 
-A list item has `key`, `name`, `description`, and `variations`. When the query `environment` names an environment, the item also has `environment`: `{ "key", "enabled", "off_variation", "version" }`. An unknown environment is 404. List pagination uses the same `limit` and `cursor` as the other lists.
+A list item has `key`, `name`, `description`, `public`, and `variations`. When the query `environment` names an environment, the item also has `environment`: `{ "key", "enabled", "off_variation", "version" }`. An unknown environment is 404. List pagination uses the same `limit` and `cursor` as the other lists.
 
-`PATCH` accepts `name`, `description`, and `variations`. At least one is required. `key` is rejected. When `variations` is present it is the full ordered list and must start with the variations already stored; values after that prefix are appended. A shorter list or a different prefix is 400. Appended variations do not change existing environment configurations.
+`PATCH` accepts `name`, `description`, `variations`, and `public`. At least one is required. `key` is rejected. When `variations` is present it is the full ordered list and must start with the variations already stored; values after that prefix are appended. A shorter list or a different prefix is 400. Appended variations do not change existing environment configurations. Changing `name` or `description` stays a writer action. Changing `public` in a project that has a protected environment requires `protected_writer`, because that flag's decision would become visible there too. Changing `public` drops the evaluation bundle for every environment in the project.
 
 ### Targeting
 
@@ -236,6 +237,22 @@ Body: `project_key`, `environment_key`, `context`, with the same credential rule
 Response: `{ "decisions": [ ... same decision objects ... ] }`.
 
 This route is for server-side fan-out. It is not a dump of rule trees. Clients that need the raw configuration use the read route below.
+
+### Evaluate public flags from a browser
+
+`POST /v1/client-evaluate`
+
+No bearer token. Body: `{ "client_id", "context" }`. `context` uses the same subject and attribute rules as evaluate. `client_id` is the value from the environment. An unknown id is 404.
+
+The server evaluates the environment's bundle, including private flags used as prerequisites, and returns only flags with `public: true`, ordered by key:
+
+```json
+{ "flags": [{ "key": "banner", "value": true, "variation_index": 1 }] }
+```
+
+The items do not include `reason`, `rule_id`, `version`, rules, salts, or segment members. A known environment with no public flags is 200 and `"flags": []`. The context is not stored.
+
+`FLAGGATOR_CLIENT_EVAL_LIMIT` (default 60) and `FLAGGATOR_CLIENT_EVAL_WINDOW_SECONDS` (default 60) cap requests from one client address. Both must be whole numbers greater than zero. Over the limit the response is 429 `rate_limited`. The counter is inside one process, like the login limit.
 
 ### Read configuration for local evaluation later
 

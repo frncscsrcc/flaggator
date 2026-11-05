@@ -35,6 +35,8 @@ class SettingsTests(unittest.TestCase):
         self.assertEqual(settings.jwt_audience, "flaggator")
         self.assertEqual(settings.jwt_ttl_seconds, 3600)
         self.assertEqual(settings.jwt_jwks_url, "")
+        self.assertEqual(settings.client_eval_limit, 60)
+        self.assertEqual(settings.client_eval_window_seconds, 60)
         self.assertNotIn("mysql_password", repr(settings))
         self.assertNotIn("jwt_secret", repr(settings))
 
@@ -56,6 +58,15 @@ class SettingsTests(unittest.TestCase):
             load_settings({"FLAGGATOR_JWT_SECRET": "too-short"})
         self.assertEqual(caught.exception.details[0]["field"], "jwt_secret")
 
+    def test_client_eval_limit_must_be_a_positive_integer(self) -> None:
+        """A zero or non-numeric client evaluation limit fails at startup."""
+        with self.assertRaises(ValidationError) as caught:
+            load_settings({"FLAGGATOR_CLIENT_EVAL_LIMIT": "0"})
+        self.assertEqual(caught.exception.details[0]["field"], "client_eval_limit")
+        with self.assertRaises(ValidationError) as caught_window:
+            load_settings({"FLAGGATOR_CLIENT_EVAL_WINDOW_SECONDS": "nope"})
+        self.assertEqual(caught_window.exception.details[0]["field"], "client_eval_window_seconds")
+
     def test_bad_port_is_a_validation_error(self) -> None:
         """A non-numeric bind port fails before a socket is opened."""
         with self.assertRaises(ValidationError) as caught:
@@ -75,7 +86,7 @@ class SettingsTests(unittest.TestCase):
         self.assertNotIn("secret-password", repr(database))
 
     def test_prepare_migrates_a_fresh_sqlite_file(self) -> None:
-        """prepare records migration 0001 and builds the null cache.
+        """prepare records migrations 0001 and 0002 and builds the null cache.
 
         Nothing listens. Health is covered by the HTTP tests.
         """
@@ -94,5 +105,5 @@ class SettingsTests(unittest.TestCase):
                 rows = connection.execute("SELECT id FROM schema_migrations").fetchall()
             finally:
                 connection.close()
-        self.assertEqual([row["id"] for row in rows], ["0001"])
+        self.assertEqual([row["id"] for row in rows], ["0001", "0002"])
         self.assertEqual(runtime.cache.get("anything"), None)

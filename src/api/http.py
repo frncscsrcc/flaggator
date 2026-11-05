@@ -102,9 +102,10 @@ class ThreadingWSGIServer(ThreadingMixIn, WSGIServer):
 class Application:
     """The WSGI callable.
 
-    GET /health does not use the database. Any other path authenticates a
-    bearer token against database before the controller runs. Calling this
-    object does not listen. serve() does that.
+    GET /health does not use the database. Login and client evaluation do
+    not use a bearer token. Any other path authenticates a bearer token
+    against the database before the controller runs. Calling this object
+    does not listen. serve() does that.
     """
 
     def __init__(
@@ -112,6 +113,8 @@ class Application:
         database: Database | None = None,
         evaluation_cache: EvaluationCache | None = None,
         jwt_settings: JwtSettings | None = None,
+        client_eval_limit: int = 60,
+        client_eval_window_seconds: float = 60,
     ) -> None:
         """Keep database, the evaluation cache, and JWT verify settings.
 
@@ -128,6 +131,10 @@ class Application:
             self._evaluation_cache = evaluation_cache
         self._jwt_settings = _DEFAULT_JWT if jwt_settings is None else jwt_settings
         self._login_limiter = LoginLimiter()
+        self._client_eval_limiter = LoginLimiter(
+            limit=client_eval_limit,
+            window_seconds=client_eval_window_seconds,
+        )
 
     def __call__(self, environ: dict, start_response: StartResponse) -> list[bytes]:
         """Handle one request and return the body as a list of byte strings.
@@ -140,6 +147,8 @@ class Application:
             request = request_from_environ(environ)
             if request.path == "/v1/auth/login":
                 response = self._login(request)
+            elif request.path == "/v1/client-evaluate":
+                response = self._client_evaluate(request)
             elif requires_credential(request):
                 response = self._authenticated(request)
             else:
@@ -169,6 +178,28 @@ class Application:
         connection = self._database.connect()
         try:
             return login(connection, request, self._jwt_settings)
+        finally:
+            connection.close()
+
+    def _client_evaluate(self, request: Request) -> Response:
+        """Evaluate public flags without a bearer token.
+
+        Opens one connection and closes it before returning. Over the
+        address limit raises TooManyRequests before the database is used.
+        A missing database raises StorageError.
+        """
+        from api.evaluation import evaluate_public
+        from api.routes import method_not_allowed
+
+        if request.method != "POST":
+            return method_not_allowed("POST")
+        if not self._client_eval_limiter.allow(request.client_address):
+            raise TooManyRequests()
+        if self._database is None:
+            raise StorageError()
+        connection = self._database.connect()
+        try:
+            return evaluate_public(connection, self._evaluation_cache, request)
         finally:
             connection.close()
 

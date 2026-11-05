@@ -28,6 +28,7 @@ class BundleFlag:
     targets: object
     prerequisites: object
     version: int
+    public: bool
 
 
 def load_bundle_flags(
@@ -43,7 +44,7 @@ def load_bundle_flags(
     """
     rows = connection.execute(
         """
-        SELECT id, `key`
+        SELECT id, `key`, public
           FROM flags
          WHERE project_id = ?
          ORDER BY `key`
@@ -67,6 +68,7 @@ def load_bundle_flags(
                 targets=config.targets,
                 prerequisites=config.prerequisites,
                 version=config.version,
+                public=int(row["public"]) == 1,
             )
         )
     return loaded

@@ -172,7 +172,10 @@ class ProjectTests(unittest.TestCase):
         )
         listed_status, listed = self.call("GET", "/v1/projects/shop/environments")
         self.assertEqual(status, "201 Created")
-        self.assertEqual(body, {"key": "prod", "name": "Production", "protected": False})
+        self.assertEqual(
+            body,
+            {"key": "prod", "name": "Production", "protected": False, "client_id": None},
+        )
         self.assertNotIn("secret", body)
         self.assertEqual(listed_status, "200 OK")
         self.assertEqual(listed["items"], [body])
@@ -205,9 +208,15 @@ class ProjectTests(unittest.TestCase):
             {"name": "Gone"},
         )
         self.assertEqual(create_status, "201 Created")
-        self.assertEqual(created, {"key": "prod", "name": "Production", "protected": True})
+        self.assertEqual(
+            created,
+            {"key": "prod", "name": "Production", "protected": True, "client_id": None},
+        )
         self.assertEqual(patch_status, "200 OK")
-        self.assertEqual(patched, {"key": "prod", "name": "Prod", "protected": False})
+        self.assertEqual(
+            patched,
+            {"key": "prod", "name": "Prod", "protected": False, "client_id": None},
+        )
         self.assertEqual(get_status, "405 Method Not Allowed")
         self.assertEqual(missing_status, "404 Not Found")
         self.assertEqual(missing["error"]["message"], "Environment does not exist.")
