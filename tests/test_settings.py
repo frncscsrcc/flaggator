@@ -54,6 +54,14 @@ class SettingsTests(unittest.TestCase):
         self.assertEqual(settings.jwt_secret, secret)
         self.assertNotIn(secret, repr(settings))
 
+    def test_jwt_ttl_above_one_day_is_rejected(self) -> None:
+        """A lifetime over 86400 seconds fails at startup. The maximum is accepted."""
+        accepted = load_settings({"FLAGGATOR_JWT_TTL_SECONDS": "86400"})
+        self.assertEqual(accepted.jwt_ttl_seconds, 86400)
+        with self.assertRaises(ValidationError) as caught:
+            load_settings({"FLAGGATOR_JWT_TTL_SECONDS": "86401"})
+        self.assertEqual(caught.exception.details[0]["field"], "jwt_ttl_seconds")
+
     def test_short_jwt_secret_is_rejected(self) -> None:
         """A non-empty signing secret shorter than 32 bytes fails at startup."""
         with self.assertRaises(ValidationError) as caught:
@@ -100,7 +108,7 @@ class SettingsTests(unittest.TestCase):
         self.assertNotIn("secret-password", repr(database))
 
     def test_prepare_migrates_a_fresh_sqlite_file(self) -> None:
-        """prepare records migrations 0001 and 0002 and builds the null cache.
+        """prepare records migrations 0001 through 0003 and builds the null cache.
 
         Nothing listens. Health is covered by the HTTP tests.
         """
@@ -119,5 +127,5 @@ class SettingsTests(unittest.TestCase):
                 rows = connection.execute("SELECT id FROM schema_migrations").fetchall()
             finally:
                 connection.close()
-        self.assertEqual([row["id"] for row in rows], ["0001", "0002"])
+        self.assertEqual([row["id"] for row in rows], ["0001", "0002", "0003"])
         self.assertEqual(runtime.cache.get("anything"), None)

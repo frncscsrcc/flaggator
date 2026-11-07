@@ -22,6 +22,16 @@ _CURSOR_MESSAGE = "Send the cursor from a previous page."
 _PATCH_FIELDS = ("name", "password", "roles", "disabled")
 
 
+def logout(principal: Principal, connection: Connection) -> Response:
+    """End the caller's local sessions.
+
+    Returns 204. A management or SDK principal is Forbidden. Does not
+    commit outside the service transaction.
+    """
+    user_service.logout(connection, principal)
+    return Response(status=204, body={})
+
+
 def login(connection: Connection, request: Request, jwt_settings: JwtSettings) -> Response:
     """Issue a local access JWT from email and password.
 

@@ -98,15 +98,20 @@ def _load_user(connection: Connection, payload: dict, algorithm: str) -> UserRow
     """Return the enabled user named by this verified token.
 
     An HS256 token is one this process signed, so a decimal sub is the
-    local user id. A JWKS token matches the normalized email claim, or a
-    sub that itself contains @. A numeric sub on an IdP token is ignored.
-    Returns None when nothing matches.
+    local user id. Its gen claim must equal that row's token_generation.
+    A missing or different gen is the same miss as an unknown token. A
+    JWKS token matches the normalized email claim, or a sub that itself
+    contains @, and is not checked for gen. A numeric sub on an IdP token
+    is ignored. Returns None when nothing matches.
     """
     if algorithm == "HS256":
         sub = payload.get("sub")
-        if isinstance(sub, str) and sub.isdigit():
-            return find_enabled_user_by_id(connection, int(sub))
-        return None
+        if not isinstance(sub, str) or not sub.isdigit():
+            return None
+        user = find_enabled_user_by_id(connection, int(sub))
+        if user is None or not _generation_matches(payload.get("gen"), user.token_generation):
+            return None
+        return user
     email = payload.get("email")
     if isinstance(email, str) and email.strip() != "":
         return find_enabled_user_by_email(connection, email.strip().lower())
@@ -114,6 +119,16 @@ def _load_user(connection: Connection, payload: dict, algorithm: str) -> UserRow
     if isinstance(sub, str) and "@" in sub:
         return find_enabled_user_by_email(connection, sub.strip().lower())
     return None
+
+
+def _generation_matches(claim: object, generation: int) -> bool:
+    """Return True when claim is the integer generation.
+
+    A bool is not a generation. Does not read the database.
+    """
+    if isinstance(claim, bool) or not isinstance(claim, int):
+        return False
+    return claim == generation
 
 
 def _bearer_token(authorization_header: str | None) -> str | None:

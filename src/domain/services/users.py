@@ -50,6 +50,7 @@ from repositories.users import (
     find_enabled_user_by_email,
     find_user_by_email,
     find_user_by_id,
+    increment_token_generation,
     insert_user,
     list_users,
     update_user,
@@ -195,6 +196,8 @@ def patch_user(
             current.disabled_at,
         )
         update_user(connection, current.id, next_name, next_hash, next_roles, next_disabled)
+        if replace_password:
+            increment_token_generation(connection, current.id)
         after = _user_document(
             current.id,
             current.email,
@@ -222,6 +225,30 @@ def patch_user(
         created_at=current.created_at,
         disabled_at=next_disabled,
     )
+
+
+def logout(connection: Connection, principal: Principal) -> None:
+    """End every local session for this user.
+
+    Raises Forbidden unless principal is a user JWT. Increments
+    token_generation, so every local token for the user stops matching,
+    and writes user.logout on the server audit. An IdP token is not
+    revoked by this counter. Does not clear a browser.
+    """
+    if principal.kind != KIND_USER:
+        raise Forbidden("A user session is required.")
+    with connection.transaction():
+        increment_token_generation(connection, principal.credential_id)
+        record_change(
+            connection,
+            principal,
+            "user.logout",
+            _AUDIT_PROJECT,
+            None,
+            None,
+            None,
+            json.dumps({"id": principal.credential_id}, separators=(",", ":"), sort_keys=True),
+        )
 
 
 def login(
@@ -265,6 +292,7 @@ def login(
             "roles": list(user.roles),
             "iss": jwt_settings.issuer,
             "aud": jwt_settings.audience,
+            "gen": user.token_generation,
             "iat": now,
             "exp": now + expires_in,
         },

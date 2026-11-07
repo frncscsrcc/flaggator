@@ -1,0 +1,3 @@
+ALTER TABLE users
+    ADD COLUMN token_generation BIGINT NOT NULL DEFAULT 0,
+    MODIFY email VARCHAR(320) NOT NULL COLLATE utf8mb4_bin;

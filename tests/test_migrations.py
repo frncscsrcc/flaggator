@@ -32,7 +32,7 @@ class MigrationTests(unittest.TestCase):
                 ).fetchall()
             finally:
                 connection.close()
-        self.assertEqual([row["id"] for row in rows], ["0001", "0002"])
+        self.assertEqual([row["id"] for row in rows], ["0001", "0002", "0003"])
         self.assertEqual(projects, [])
 
     def test_a_failing_script_is_not_recorded(self) -> None:
@@ -107,8 +107,10 @@ class MigrationTests(unittest.TestCase):
                 rows = connection.execute(
                     "SELECT id FROM schema_migrations ORDER BY id"
                 ).fetchall()
+                columns = connection.execute("PRAGMA table_info(users)").fetchall()
             finally:
                 connection.close()
         self.assertEqual(int(flag["public"]), 0)
         self.assertIsNone(environment["client_id"])
-        self.assertEqual([row["id"] for row in rows], ["0001", "0002"])
+        self.assertEqual([row["id"] for row in rows], ["0001", "0002", "0003"])
+        self.assertIn("token_generation", [row["name"] for row in columns])

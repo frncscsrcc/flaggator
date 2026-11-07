@@ -111,6 +111,7 @@ class AuthzTests(unittest.TestCase):
             {
                 "sub": str(user["id"]),
                 "roles": roles,
+                "gen": 0,
                 "iss": "flaggator",
                 "aud": "flaggator",
                 "iat": 1_700_000_000,

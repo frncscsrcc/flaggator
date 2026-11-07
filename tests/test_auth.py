@@ -301,6 +301,67 @@ class AuthenticationTests(unittest.TestCase):
         self.assertNotIn(self.management_token, stored["after_json"])
         self.assertEqual([row["project_key"] for row in remaining], ["shop"])
 
+    def test_logout_and_a_missing_generation_reject_the_local_token(self) -> None:
+        """Logout bumps gen for every local session. A token without gen is 401.
+
+        A management token cannot call logout. The audit row names the user
+        and does not include a secret.
+        """
+        user_id = self._insert_user("ops@example.com", '["reader"]')
+        token = encode_hs256(
+            {
+                "sub": str(user_id),
+                "gen": 0,
+                "iss": "flaggator",
+                "aud": "flaggator",
+                "iat": 1_700_000_000,
+                "exp": 2_000_000_000,
+            },
+            _JWT_SECRET,
+        )
+        stale = encode_hs256(
+            {
+                "sub": str(user_id),
+                "iss": "flaggator",
+                "aud": "flaggator",
+                "iat": 1_700_000_000,
+                "exp": 2_000_000_000,
+            },
+            _JWT_SECRET,
+        )
+        status, body = call(self.application, "POST", "/v1/auth/logout", f"Bearer {token}")
+        denied_status, denied = call(
+            self.application,
+            "POST",
+            "/v1/auth/logout",
+            f"Bearer {self.management_token}",
+        )
+        connection = self.database.connect()
+        try:
+            with self.assertRaises(Unauthenticated):
+                authenticate(connection, f"Bearer {token}", _JWT)
+            with self.assertRaises(Unauthenticated):
+                authenticate(connection, f"Bearer {stale}", _JWT)
+            audit = connection.execute(
+                """
+                SELECT action, actor_kind, actor_id, project_key, after_json
+                  FROM audit_events
+                 WHERE action = 'user.logout'
+                """
+            ).fetchone()
+        finally:
+            connection.close()
+        self.assertEqual(status, "204 No Content")
+        self.assertEqual(body, {})
+        self.assertEqual(denied_status, "403 Forbidden")
+        self.assertIn("user session", denied["error"]["message"])
+        self.assertIsNotNone(audit)
+        assert audit is not None
+        self.assertEqual(audit["actor_kind"], "user")
+        self.assertEqual(audit["actor_id"], user_id)
+        self.assertEqual(audit["project_key"], "")
+        self.assertEqual(json.loads(audit["after_json"]), {"id": user_id})
+
     def _revoke(self, token: str) -> None:
         """Set revoked_at on the credential for token. Commits that write."""
         connection = self.database.connect()
@@ -373,6 +434,7 @@ class AuthenticationTests(unittest.TestCase):
             {
                 "sub": str(user_id),
                 "roles": ["protected_writer"],
+                "gen": 0,
                 "iss": "flaggator",
                 "aud": "flaggator",
                 "iat": 1_700_000_000,
@@ -387,7 +449,8 @@ class AuthenticationTests(unittest.TestCase):
             disabled_token = encode_hs256(
                 {
                     "sub": str(missing),
-                    "iss": "flaggator",
+                    "gen": 0,
+                "iss": "flaggator",
                     "aud": "flaggator",
                     "iat": 1_700_000_000,
                     "exp": 2_000_000_000,

@@ -183,6 +183,28 @@ paths:
           $ref: "#/components/responses/RateLimited"
         "500":
           $ref: "#/components/responses/StorageError"
+  /v1/auth/logout:
+    post:
+      tags: [Auth]
+      summary: End local sessions
+      operationId: logout
+      description: |
+        Accepts a user JWT. Increments that user's token generation, so
+        every local HS256 session for the user stops matching, and writes
+        `user.logout` to the server audit. Returns 204. A management token
+        or an SDK token is 403. An IdP token is not revoked by this route;
+        it stays valid until `exp`.
+      responses:
+        "204":
+          description: Local sessions ended. The body is an empty object.
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "405":
+          $ref: "#/components/responses/MethodNotAllowed"
+        "500":
+          $ref: "#/components/responses/StorageError"
   /v1/audit:
     get:
       tags: [Auth]

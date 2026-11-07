@@ -2,9 +2,9 @@
 // The address on the right comes from GET /v1/users/{id}. The id is the
 // sub claim. A missing token leaves that spot empty.
 
-import { getUser } from "./api.js";
+import { getUser, logout } from "./api.js";
 import { subject } from "./roles.js";
-import { token } from "./session.js";
+import { clearToken, token } from "./session.js";
 
 const pages = [
   { id: "dashboard", href: "index.html", label: "Dashboard" },
@@ -33,6 +33,20 @@ function brandLink() {
   return link;
 }
 
+function signOutButton() {
+  const button = document.createElement("button");
+  button.type = "button";
+  button.className = "button quiet";
+  button.textContent = "Sign out";
+  button.addEventListener("click", () => {
+    logout().finally(() => {
+      clearToken();
+      window.location.href = "login.html";
+    });
+  });
+  return button;
+}
+
 function navigation() {
   const nav = document.createElement("nav");
   nav.className = "nav";
@@ -54,14 +68,19 @@ const header = document.createElement("header");
 header.className = "topbar";
 const who = document.createElement("p");
 who.className = "who";
+const email = document.createElement("span");
+who.append(email);
 header.append(brandLink(), navigation(), who);
+if (token() !== "") {
+  who.append(signOutButton());
+}
 if (token() !== "" && subject() !== "") {
   getUser(subject()).then((user) => {
     if (user !== null && typeof user.email === "string") {
-      who.textContent = user.email;
+      email.textContent = user.email;
     }
   }).catch(() => {
-    who.textContent = "";
+    email.textContent = "";
   });
 }
 headerMount.replaceChildren(header);

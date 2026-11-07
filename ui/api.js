@@ -123,6 +123,10 @@ export function listFlags(projectKey, cursor) {
   return request("GET", _nested(projectKey, "flags", cursor));
 }
 
+export function logout() {
+  return request("POST", "/v1/auth/logout");
+}
+
 export async function login(email, password) {
   const payload = await request("POST", "/v1/auth/login", { email, password });
   const accessToken = payload === null ? undefined : payload.access_token;

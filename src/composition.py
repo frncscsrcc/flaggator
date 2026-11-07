@@ -118,10 +118,7 @@ def load_settings(environment: Mapping[str, str] | None = None) -> Settings:
         jwt_secret=jwt_secret,
         jwt_issuer=source.get("FLAGGATOR_JWT_ISSUER", "flaggator"),
         jwt_audience=source.get("FLAGGATOR_JWT_AUDIENCE", "flaggator"),
-        jwt_ttl_seconds=_positive_int(
-            source.get("FLAGGATOR_JWT_TTL_SECONDS", "3600"),
-            "jwt_ttl_seconds",
-        ),
+        jwt_ttl_seconds=_jwt_ttl_seconds(source.get("FLAGGATOR_JWT_TTL_SECONDS", "3600")),
         jwt_jwks_url=source.get("FLAGGATOR_JWT_JWKS_URL", ""),
         client_eval_limit=_positive_int(
             source.get("FLAGGATOR_CLIENT_EVAL_LIMIT", "60"),
@@ -314,6 +311,26 @@ def _trusted_proxies(raw: str) -> tuple[ipaddress.IPv4Network | ipaddress.IPv6Ne
                 ],
             ) from exc
     return tuple(networks)
+
+
+def _jwt_ttl_seconds(raw: str) -> int:
+    """Return the local JWT lifetime in seconds.
+
+    Raises ValidationError when raw is not a positive integer, or when it
+    is greater than 86400. Does not connect.
+    """
+    seconds = _positive_int(raw, "jwt_ttl_seconds")
+    if seconds > 86400:
+        raise ValidationError(
+            "The JWT lifetime is too long.",
+            details=[
+                {
+                    "field": "jwt_ttl_seconds",
+                    "message": "Use at most 86400 seconds.",
+                }
+            ],
+        )
+    return seconds
 
 
 def _positive_int(raw: str, field: str) -> int:

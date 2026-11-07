@@ -23,7 +23,7 @@ from api.segments import (
     replace_segment,
 )
 from api.targeting import get_targeting, replace_targeting
-from api.users import create_user, get_user, list_users, patch_user
+from api.users import create_user, get_user, list_users, logout, patch_user
 from domain.errors import Forbidden, StorageError
 from domain.models.principal import (
     KIND_MANAGEMENT,
@@ -89,6 +89,8 @@ def authorize(request: Request, principal: Principal) -> None:
             return
         raise Forbidden("The credential may not call this route.")
     if principal.kind == KIND_USER:
+        if request.method == "POST" and request.path == "/v1/auth/logout":
+            return
         if _sdk_may_read(request) or request.path in _EVALUATION_PATHS:
             raise Forbidden("The credential may not call this route.")
         if (
@@ -168,6 +170,10 @@ def _management_route(
         if len(parts) == 4:
             return _one_management_token(request, session[0], session[1], parts[3])
         return route_not_found()
+    if parts[2] == "auth" and len(parts) == 4 and parts[3] == "logout":
+        if request.method != "POST":
+            return method_not_allowed("POST")
+        return logout(principal, connection)
     if parts[2] == "audit" and len(parts) == 3:
         if request.method != "GET":
             return method_not_allowed("GET")

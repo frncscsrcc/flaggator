@@ -28,6 +28,7 @@ class UserRow:
     roles: tuple[str, ...]
     created_at: str
     disabled_at: str | None
+    token_generation: int
 
 
 def insert_user(
@@ -51,6 +52,22 @@ def insert_user(
         (email, name, password_hash, _roles_json(roles), created_at, None),
     )
     return cursor.last_insert_id
+
+
+def increment_token_generation(connection: Connection, user_id: int) -> None:
+    """Add one to the user's token generation.
+
+    Local JWTs that carry the previous value stop matching. Does not commit.
+    A missing id changes no row.
+    """
+    connection.execute(
+        """
+        UPDATE users
+           SET token_generation = token_generation + 1
+         WHERE id = ?
+        """,
+        (user_id,),
+    )
 
 
 def update_user(
@@ -85,7 +102,8 @@ def find_user_by_id(connection: Connection, user_id: int) -> UserRow | None:
     """
     row = connection.execute(
         """
-        SELECT id, email, name, password_hash, roles_json, created_at, disabled_at
+        SELECT id, email, name, password_hash, roles_json, created_at, disabled_at,
+               token_generation
           FROM users
          WHERE id = ?
         """,
@@ -104,7 +122,8 @@ def find_enabled_user_by_id(connection: Connection, user_id: int) -> UserRow | N
     """
     row = connection.execute(
         """
-        SELECT id, email, name, password_hash, roles_json, created_at, disabled_at
+        SELECT id, email, name, password_hash, roles_json, created_at, disabled_at,
+               token_generation
           FROM users
          WHERE id = ? AND disabled_at IS NULL
         """,
@@ -122,7 +141,8 @@ def find_user_by_email(connection: Connection, email: str) -> UserRow | None:
     """
     row = connection.execute(
         """
-        SELECT id, email, name, password_hash, roles_json, created_at, disabled_at
+        SELECT id, email, name, password_hash, roles_json, created_at, disabled_at,
+               token_generation
           FROM users
          WHERE email = ?
         """,
@@ -141,7 +161,8 @@ def find_enabled_user_by_email(connection: Connection, email: str) -> UserRow | 
     """
     row = connection.execute(
         """
-        SELECT id, email, name, password_hash, roles_json, created_at, disabled_at
+        SELECT id, email, name, password_hash, roles_json, created_at, disabled_at,
+               token_generation
           FROM users
          WHERE email = ? AND disabled_at IS NULL
         """,
@@ -251,6 +272,7 @@ def _from_row(row: object) -> UserRow:
         roles=_parse_roles(str(row["roles_json"])),
         created_at=str(row["created_at"]),
         disabled_at=None if disabled_at is None else str(disabled_at),
+        token_generation=int(row["token_generation"]),
     )
 
 
