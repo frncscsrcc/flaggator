@@ -159,7 +159,9 @@ Unknown flag: the evaluate endpoint does not invent a variation. The caller supp
 
 Writes reject a prerequisite list that contains a cycle, including a flag that requires itself, using the configs currently stored in that environment.
 
-Evaluation also keeps the set of flag keys already entered on the current walk. A key is removed when that flag's decision has been produced, so two flags may require the same third flag. Re-entering a key that is still on the walk yields `prerequisite_failed` for the flag that closed the cycle. The requested flag is depth 1. A flag entered deeper than the cap returns `prerequisite_failed` and its prerequisites are not evaluated. The cap is in [Security](security.md). Both checks exist so a bad write and a racing pair of writes cannot make evaluation recurse without bound.
+Evaluation also keeps the set of flag keys already entered on the current walk. A key is removed when that flag's decision has been produced, so two flags may require the same third flag. Re-entering a key that is still on the walk yields `prerequisite_failed` for the flag that closed the cycle. The requested flag is depth 1. A flag entered deeper than the cap returns `prerequisite_failed` and its prerequisites are not evaluated. The caps are in [Security](security.md). A write also rejects a list longer than the prerequisite cap. A list stored before that cap still evaluates.
+
+Within one evaluation the walk remembers a decision by flag and depth, and reuses it when the same flag is required again at that depth. The depth is part of the key because a flag near the depth cap can fail where the same flag, required earlier, would not. A cycle and a walk past the cap are not remembered. On a graph with no cycle the remembered decision matches a walk that recomputes every edge. A cycle can still appear when two writes each see the other's previous list; the memory bounds that walk, and which flag on the cycle answers `prerequisite_failed` can follow the order of the prerequisites. The caller's default is not remembered: it applies only when the requested flag is absent.
 
 ### Bucketing
 

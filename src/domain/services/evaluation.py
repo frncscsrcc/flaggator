@@ -94,13 +94,14 @@ def evaluate_all(
     )
     definitions = _definitions(document)
     decisions: list[Decision] = []
+    memo: dict[tuple[str, int], Decision] = {}
     for flag in document["flags"]:
         if not isinstance(flag, dict):
             raise StorageError()
         flag_key = flag.get("key")
         if not isinstance(flag_key, str):
             raise StorageError()
-        decisions.append(evaluate(flag_key, definitions, checked))
+        decisions.append(evaluate(flag_key, definitions, checked, memo=memo))
     return decisions
 
 
@@ -132,6 +133,7 @@ def evaluate_public(
     )
     definitions = _definitions(document)
     decisions: list[Decision] = []
+    memo: dict[tuple[str, int], Decision] = {}
     for flag in document["flags"]:
         if not isinstance(flag, dict):
             raise StorageError()
@@ -140,7 +142,7 @@ def evaluate_public(
         flag_key = flag.get("key")
         if not isinstance(flag_key, str):
             raise StorageError()
-        decisions.append(evaluate(flag_key, definitions, checked))
+        decisions.append(evaluate(flag_key, definitions, checked, memo=memo))
     return decisions
 
 

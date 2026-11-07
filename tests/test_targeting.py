@@ -257,6 +257,20 @@ class TargetingTests(unittest.TestCase):
         )
         self.assertEqual(cycle_status, "400 Bad Request")
         self.assertEqual(cycle["error"]["details"][0]["field"], "prerequisites")
+        extras: list[dict[str, object]] = []
+        index = 0
+        while index < 21:
+            key = "p" + str(index)
+            self.add_flag(key)
+            extras.append({"flag_key": key, "variation_index": 0})
+            index = index + 1
+        too_many_status, too_many = self.call(
+            "PUT",
+            _PATH,
+            self.document(2, prerequisites=extras),
+        )
+        self.assertEqual(too_many_status, "400 Bad Request")
+        self.assertEqual(too_many["error"]["details"][0]["field"], "prerequisites")
         _payments_status, payments = self.call("GET", prod_payments)
         self.assertEqual(payments["version"], 1)
         self_status, _self_body = self.call(

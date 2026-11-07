@@ -1,7 +1,9 @@
 """The pure evaluator. These tests do not open a database."""
 
 import hashlib
+import random
 import sys
+import time
 import unittest
 from pathlib import Path
 
@@ -28,6 +30,7 @@ from domain.models.evaluation import (
     VariationServe,
 )
 from domain.services.evaluator import evaluate
+from domain.validation import MAX_PREREQUISITE_DEPTH
 
 
 class EvaluatorTests(unittest.TestCase):
@@ -279,6 +282,44 @@ class EvaluatorTests(unittest.TestCase):
             self.decision_for("f0", False, 0, REASON_PREREQUISITE_FAILED, None),
         )
 
+    def test_a_wide_graph_reuses_each_flag_at_a_depth(self) -> None:
+        """Ten layers, the first a single root and the rest five flags wide.
+
+        Every flag requires every flag in the next layer. Without a memory
+        that walk repeats the same flag on every path. With one, it finishes
+        and the root still serves variation 1, because every leaf does.
+        """
+        definitions = self.fan(layers=10, width=5)
+        started = time.monotonic()
+        decision = evaluate("root", definitions, Context("user", {}))
+        elapsed = time.monotonic() - started
+        self.assertLess(elapsed, 1.0)
+        self.assertEqual(
+            decision,
+            self.decision_for("root", True, 1, REASON_FALLTHROUGH, None),
+        )
+
+    def test_memory_matches_a_fresh_walk_when_the_depth_cap_is_in_play(self) -> None:
+        """A remembered decision matches a walk that recomputes every edge.
+
+        The graphs are acyclic. Some chains are longer than the depth cap,
+        so the same flag is required both where the cap stops it and where
+        it does not. The caller's default stays off the memory: a missing
+        root still returns that default.
+        """
+        generator = random.Random(11)
+        context = Context("user", {})
+        for _draw in range(30):
+            definitions = self.random_dag(generator)
+            for key in definitions:
+                remembered = evaluate(key, definitions, context)
+                fresh = _walk_without_memory(key, definitions, set(), 1)
+                self.assertEqual(remembered.variation_index, fresh.variation_index)
+                self.assertEqual(remembered.reason, fresh.reason)
+        missing = evaluate("absent", {}, context, default="fallback")
+        self.assertEqual(missing.value, "fallback")
+        self.assertEqual(missing.reason, REASON_FLAG_NOT_FOUND)
+
     def test_a_missing_flag_returns_the_caller_default(self) -> None:
         """The default is the value only when the flag key is unknown."""
         decision = evaluate("missing", {}, Context("user", {}), default=False)
@@ -360,6 +401,61 @@ class EvaluatorTests(unittest.TestCase):
             version=1,
         )
 
+    def fan(self, layers: int, width: int) -> dict[str, FlagDefinition]:
+        """Return a root plus layers-1 rows of width flags.
+
+        Each flag requires every flag in the next row, at variation 1.
+        The last row has no prerequisites and serves variation 1. Does not
+        evaluate.
+        """
+        definitions: dict[str, FlagDefinition] = {}
+        previous: tuple[str, ...] = ()
+        row = layers - 1
+        while row >= 1:
+            keys: list[str] = []
+            column = 0
+            while column < width:
+                key = "l" + str(row) + "-" + str(column)
+                keys.append(key)
+                prerequisites = tuple(Prerequisite(child, 1) for child in previous)
+                definitions[key] = self.plain(key, prerequisites, VariationServe(1))
+                column = column + 1
+            previous = tuple(keys)
+            row = row - 1
+        root_prerequisites = tuple(Prerequisite(child, 1) for child in previous)
+        definitions["root"] = self.plain("root", root_prerequisites, VariationServe(1))
+        return definitions
+
+    def random_dag(self, generator: random.Random) -> dict[str, FlagDefinition]:
+        """Return a small acyclic graph, sometimes deeper than the depth cap.
+
+        Edges point at a higher index, so the graph has no cycle. A flag
+        serves variation 1 when its prerequisites do. Does not evaluate.
+        """
+        count = generator.randint(4, 12)
+        keys = ["n" + str(index) for index in range(count)]
+        definitions: dict[str, FlagDefinition] = {}
+        index = count - 1
+        while index >= 0:
+            later = keys[index + 1 :]
+            take = generator.randint(0, min(3, len(later)))
+            chosen = generator.sample(later, take) if take > 0 else []
+            if index == 0:
+                chosen.append("c0")
+            prerequisites = tuple(Prerequisite(child, 1) for child in chosen)
+            definitions[keys[index]] = self.plain(keys[index], prerequisites, VariationServe(1))
+            index = index - 1
+        chain_index = 11
+        while chain_index >= 0:
+            key = "c" + str(chain_index)
+            prerequisites = ()
+            if chain_index < 11:
+                prerequisites = (Prerequisite("c" + str(chain_index + 1), 1),)
+            definitions[key] = self.plain(key, prerequisites, VariationServe(1))
+            chain_index = chain_index - 1
+        definitions["shallow"] = self.plain("shallow", (Prerequisite("c8", 1),), VariationServe(1))
+        return definitions
+
     def chain(self, length: int) -> dict[str, FlagDefinition]:
         """Return length flags where each one requires the next at variation 1.
 
@@ -427,3 +523,64 @@ class EvaluatorTests(unittest.TestCase):
         material = flag_key + ":" + salt + ":" + subject
         digest = hashlib.sha256(material.encode("utf-8")).digest()
         return int.from_bytes(digest[0:4], "big") % 100000
+
+
+def _walk_without_memory(
+    flag_key: str,
+    definitions: dict[str, FlagDefinition],
+    visiting: set[str],
+    depth: int,
+) -> Decision:
+    """Decide flag_key the way the walk did before it remembered decisions.
+
+    Only the flags these tests build: enabled, no rules, a variation
+    fallthrough. A cycle or a depth past the cap serves the off variation.
+    Does not read the database.
+    """
+    definition = definitions.get(flag_key)
+    if flag_key in visiting or depth > MAX_PREREQUISITE_DEPTH:
+        if definition is None:
+            return Decision(flag_key, None, None, REASON_FLAG_NOT_FOUND, None, None)
+        index = definition.off_variation
+        return Decision(
+            flag_key,
+            definition.variations[index],
+            index,
+            REASON_PREREQUISITE_FAILED,
+            None,
+            definition.version,
+        )
+    if definition is None:
+        return Decision(flag_key, None, None, REASON_FLAG_NOT_FOUND, None, None)
+    visiting.add(flag_key)
+    try:
+        for prerequisite in definition.prerequisites:
+            child = _walk_without_memory(
+                prerequisite.flag_key,
+                definitions,
+                visiting,
+                depth + 1,
+            )
+            if child.variation_index != prerequisite.variation_index:
+                index = definition.off_variation
+                return Decision(
+                    flag_key,
+                    definition.variations[index],
+                    index,
+                    REASON_PREREQUISITE_FAILED,
+                    None,
+                    definition.version,
+                )
+        if not isinstance(definition.fallthrough, VariationServe):
+            raise AssertionError("the reference walk only serves a variation")
+        index = definition.fallthrough.variation_index
+        return Decision(
+            flag_key,
+            definition.variations[index],
+            index,
+            REASON_FALLTHROUGH,
+            None,
+            definition.version,
+        )
+    finally:
+        visiting.remove(flag_key)

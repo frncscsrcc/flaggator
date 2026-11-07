@@ -37,14 +37,21 @@ def evaluate(
     definitions: Mapping[str, FlagDefinition],
     context: Context,
     default: object = None,
+    memo: dict[tuple[str, int], Decision] | None = None,
 ) -> Decision:
     """Return the decision for flag_key in definitions.
 
     default is used only when flag_key is absent. A flag that exists does
-    not use it. The walk starts at depth 1. Does not read the database and
-    does not draw a random value.
+    not use it. The walk starts at depth 1. memo stores decisions already
+    produced for this context, keyed by flag and depth. A None memo starts
+    a fresh map for this call. A shared map lets one request reuse a flag
+    that several roots require. A cycle or the depth cap is not stored: the
+    same flag at another depth can still be decided. Does not read the
+    database and does not draw a random value.
     """
-    return _evaluate(flag_key, definitions, context, set(), 1, default, True)
+    if memo is None:
+        memo = {}
+    return _evaluate(flag_key, definitions, context, set(), 1, default, True, memo)
 
 
 def _evaluate(
@@ -55,12 +62,15 @@ def _evaluate(
     depth: int,
     default: object,
     use_default: bool,
+    memo: dict[tuple[str, int], Decision],
 ) -> Decision:
     """Return the decision for one step of the walk.
 
     depth is 1 for the flag the caller asked for. visiting holds the keys
     on the current walk and is restored before this call returns. use_default
-    is true only for that first flag. Does not read the database.
+    is true only for that first flag. A stored decision is reused only when
+    this flag is not already on the walk and the depth is within the cap.
+    Does not read the database.
     """
     definition = definitions.get(flag_key)
     if flag_key in visiting:
@@ -69,11 +79,16 @@ def _evaluate(
         return _stopped(flag_key, definition, default, use_default)
     if definition is None:
         return _missing(flag_key, default, use_default)
+    stored = memo.get((flag_key, depth))
+    if stored is not None:
+        return stored
     visiting.add(flag_key)
     try:
-        return _decide(definition, definitions, context, visiting, depth)
+        decision = _decide(definition, definitions, context, visiting, depth, memo)
     finally:
         visiting.remove(flag_key)
+    memo[(flag_key, depth)] = decision
+    return decision
 
 
 def _decide(
@@ -82,11 +97,12 @@ def _decide(
     context: Context,
     visiting: set[str],
     depth: int,
+    memo: dict[tuple[str, int], Decision],
 ) -> Decision:
     """Apply off, prerequisites, targets, rules, then fallthrough.
 
-    Does not read the database. The caller removes definition.key from
-    visiting when this returns.
+    Does not read the database. The caller stores the returned decision
+    under definition.key and depth, then removes the key from visiting.
     """
     if not definition.enabled:
         return _served(definition, definition.off_variation, REASON_OFF, None)
@@ -99,6 +115,7 @@ def _decide(
             depth + 1,
             None,
             False,
+            memo,
         )
         if decision.variation_index != prerequisite.variation_index:
             return _served(definition, definition.off_variation, REASON_PREREQUISITE_FAILED, None)

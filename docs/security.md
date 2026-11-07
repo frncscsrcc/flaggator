@@ -163,6 +163,7 @@ Evaluation walks prerequisites with a visited set and a depth cap, specified in 
 | Flags per project | 500 |
 | Segments per environment | 200 |
 | Prerequisite depth | 10 |
+| Prerequisites per configuration | 20 |
 | Targets per configuration (total subjects) | 1000 |
 | Subjects per segment | 1000 |
 | Segments cited by one variation | 20 |

@@ -26,6 +26,7 @@ from domain.validation import (
     MAX_CLAUSE_STRING_LENGTH,
     MAX_CLAUSES,
     MAX_CLAUSE_VALUES,
+    MAX_PREREQUISITES,
     MAX_RULES,
     MAX_SEGMENTS_PER_TARGET,
     MAX_TARGETS,
@@ -565,9 +566,11 @@ def _prerequisite_documents(
     """Return the prerequisite list after the existence and cycle checks.
 
     Raises ValidationError when a prerequisite flag is absent, a variation
-    index is off that flag, or the list would form a cycle in this
-    environment. Does not commit.
+    index is off that flag, the list is longer than the cap, or the list
+    would form a cycle in this environment. Does not commit.
     """
+    if len(command.prerequisites) > MAX_PREREQUISITES:
+        _reject("prerequisites", "A configuration can list at most 20 prerequisites.")
     seen: set[str] = set()
     for item in command.prerequisites:
         if not is_public_key(item.flag_key):

@@ -43,6 +43,9 @@ DEFAULT_EVAL_TTL_SECONDS = 5
 MAX_CACHED_BUNDLE_BYTES = 1024 * 1024
 # The requested flag counts as depth 1. A flag past this depth is not walked.
 MAX_PREREQUISITE_DEPTH = 10
+# One configuration may name this many other flags. A wider list is rejected
+# on write. Evaluation still walks a list that was stored before the cap.
+MAX_PREREQUISITES = 20
 
 
 def is_public_key(value: str) -> bool:
