@@ -239,6 +239,26 @@ def list_environment_keys(connection: Connection, project_id: int) -> list[str]:
     return [str(row["key"]) for row in rows]
 
 
+def list_environment_ids_and_keys(
+    connection: Connection,
+    project_id: int,
+) -> list[tuple[int, str]]:
+    """Return each environment id and key in project_id, ordered by id.
+
+    An empty project returns an empty list. Does not commit.
+    """
+    rows = connection.execute(
+        """
+        SELECT id, `key`
+          FROM environments
+         WHERE project_id = ?
+         ORDER BY id
+        """,
+        (project_id,),
+    ).fetchall()
+    return [(int(row["id"]), str(row["key"])) for row in rows]
+
+
 def list_environment_ids(connection: Connection, project_id: int) -> list[int]:
     """Return the environment ids in project_id, ordered by id.
 

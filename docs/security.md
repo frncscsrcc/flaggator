@@ -188,7 +188,7 @@ Exceeding a limit is `ValidationError` (400), not a truncated write.
 
 **MySQL.** The configuration holds a host, database name, user, and password. The password is a secret: it is not logged, not written to the audit log, and not returned by any API. The MySQL account used by the process needs rights on this schema only. A dump of the schema is a backup of every flag and of credential hashes.
 
-**Cache.** The evaluation bundle includes rule trees and rollout salts. The in-memory cache holds that inside the process. It does not hold bearer tokens, token hashes, or context attributes. A fill that started before an invalidation does not write back over the delete: each key has a generation bumped on commit. Credential checks go to the database, so revocation is not delayed by a TTL ([Cache](cache.md)). A later Redis or Memcached holds the same bundles and should be treated as confidential as the database.
+**Cache.** The evaluation bundle includes rule trees and rollout salts. The in-memory cache holds that inside the process, up to 128 MiB of bundle bytes, and does not store a bundle over 8 MiB. A write that would leave a bundle over 8 MiB is rejected. It does not hold bearer tokens, token hashes, or context attributes. A fill that started before an invalidation does not write back over the delete: each key has a generation bumped on commit. Credential checks go to the database, so revocation is not delayed by a TTL ([Cache](cache.md)). A later Redis or Memcached holds the same bundles and should be treated as confidential as the database.
 
 ## Dependency policy
 

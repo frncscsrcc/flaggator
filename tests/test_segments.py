@@ -6,6 +6,7 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 _SRC = Path(__file__).resolve().parents[1] / "src"
 if str(_SRC) not in sys.path:
@@ -50,6 +51,30 @@ class SegmentTests(unittest.TestCase):
     def tearDown(self) -> None:
         """Delete the temporary database file."""
         self._temporary.cleanup()
+
+    def test_a_bundle_over_the_cap_is_rejected_and_rolled_back(self) -> None:
+        """A segment write that leaves the bundle over the cap stores nothing.
+
+        The cap is lowered so the test does not allocate 8 MiB. A read of a
+        bundle already over that cap still returns the document.
+        """
+        self.seed()
+        with patch("repositories.eval_cache.MAX_BUNDLE_BYTES", 32):
+            status, body = self.call(
+                "POST",
+                _SEGMENTS,
+                {"key": "developers", "name": "Developers", "subjects": ["alice"]},
+            )
+            read_status, read = self.call(
+                "GET",
+                "/v1/projects/shop/environments/prod/evaluation-config",
+            )
+        missing_status, _missing = self.call("GET", _SEGMENTS + "/developers")
+        self.assertEqual(status, "400 Bad Request")
+        self.assertEqual(body["error"]["details"][0]["field"], "bundle")
+        self.assertEqual(read_status, "200 OK")
+        self.assertEqual(read["environment_key"], "prod")
+        self.assertEqual(missing_status, "404 Not Found")
 
     def test_create_get_list_and_replace(self) -> None:
         """A segment is stored, listed, and replaced. The audit row has no secret."""

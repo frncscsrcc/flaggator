@@ -28,6 +28,7 @@ from repositories.environments import (
     set_client_id,
     update_environment,
 )
+from repositories.eval_cache import require_bundle_within_cap
 from repositories.flag_configs import insert_disabled_config, list_flag_ids
 from repositories.projects import find_project
 
@@ -78,6 +79,7 @@ def create_environment(
             None,
             _environment_document(key, name, protected),
         )
+        require_bundle_within_cap(connection, project.id, environment_id, project.key, key)
     return Environment(key=key, name=name, protected=protected, client_id=None)
 
 

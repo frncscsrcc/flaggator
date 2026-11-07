@@ -20,7 +20,7 @@ delete(key)
 | `NullCache` | `get` is always `None`. `set` and `delete` do nothing. Tests of SQL, and any deploy that wants every read to hit the database. |
 | Redis, Memcached | Later. Same three operations. A client library is then an optional extra, imported only by that implementation. |
 
-`MemoryCache` uses a lock, so a threaded HTTP adapter can share it. It stores each value with a monotonic deadline. `get` drops an expired entry. The map has a maximum number of entries (default 10000). When a `set` would exceed it, expired entries are dropped first, then the entry with the soonest deadline.
+`MemoryCache` uses a lock, so a threaded HTTP adapter can share it. It stores each value with a monotonic deadline. `get` drops an expired entry. The map has a maximum number of entries (default 10000) and a maximum total of value bytes (default 128 MiB). When a `set` would exceed either, expired entries are dropped first, then the entry with the soonest deadline. A value larger than the byte budget is not stored, and that `set` does not evict other keys.
 
 `src/composition.py` builds one cache for the process and passes it to the repository wrapper. There is no container and no global lookup. Configuration selects `memory` or `null`.
 
@@ -32,7 +32,7 @@ One entry per environment, the evaluation bundle: variation lists and targeting 
 eval:{project_key}:{environment_key}
 ```
 
-`evaluate` and `evaluate-all` read through this entry. A miss loads from SQL, encodes the bundle, and `set`s it. The TTL is a backstop (default 5 seconds, configuration). The usual way an entry disappears is `delete` after a write commits.
+`evaluate` and `evaluate-all` read through this entry. A miss loads from SQL, encodes the bundle, and `set`s it. A later hit in the same process reuses the decoded document for that generation, so it does not parse the bytes again. Callers do not mutate that document. The TTL is a backstop (default 5 seconds, configuration). The usual way an entry disappears is `delete` after a write commits.
 
 These reads do not use the cache:
 
@@ -40,7 +40,7 @@ These reads do not use the cache:
 - Audit.
 - Credential lookup. A revoked SDK token stops working on the next request. A TTL in front of the credential table would keep a revoked token alive.
 
-Payloads larger than 1 MiB are not stored. The read still returns the SQL result.
+A bundle larger than 8 MiB is not stored. The read still returns the SQL result. A write that would leave an environment's bundle over 8 MiB is rejected and rolled back: creating an environment, creating or replacing a segment, replacing targeting, creating a flag, or appending variations. A database that is already over the cap still loads. The same 8 MiB figure is the cache limit and the write limit.
 
 ## Invalidation
 

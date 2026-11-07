@@ -8,9 +8,11 @@ import json
 import threading
 
 from cache.protocol import Cache
-from domain.validation import MAX_CACHED_BUNDLE_BYTES
+from domain.errors import ValidationError
+from domain.validation import MAX_BUNDLE_BYTES
 from repositories.bundles import BundleFlag, load_bundle_flags
 from repositories.db import Connection
+from repositories.environments import list_environment_ids_and_keys
 from repositories.json_text import dump_json_text
 from repositories.segments import SegmentRow, list_environment_segments
 
@@ -28,6 +30,9 @@ class EvaluationCache:
         self._ttl_seconds = ttl_seconds
         self._lock = threading.Lock()
         self._generations: dict[str, int] = {}
+        # Decoded document for the current generation. A hit skips json.loads.
+        # Callers must not mutate the dict.
+        self._decoded: dict[str, tuple[int, dict]] = {}
 
     def load_document(
         self,
@@ -39,23 +44,29 @@ class EvaluationCache:
     ) -> dict:
         """Return the evaluation document for one environment.
 
-        A hit returns the cached JSON and does not read the bundle tables.
-        A miss loads SQL, then stores the document when it is at most 1 MiB.
-        A larger document is returned and not stored. Does not commit.
+        A hit returns the decoded document kept for this generation and does
+        not parse the cached bytes again. A miss loads SQL, then stores the
+        document when it is at most MAX_BUNDLE_BYTES. A larger document is
+        returned and not stored. The returned dict must not be mutated.
+        Does not commit.
         """
         key = cache_key(project_key, environment_key)
         generation = self._generation(key)
         cached = self._cache.get(key)
         if cached is not None:
+            remembered = self._remembered(key, generation)
+            if remembered is not None:
+                return remembered
             document = _decode(cached, project_key, environment_key)
             if document is not None:
+                self._remember(key, generation, document)
                 return document
         flags = load_bundle_flags(connection, project_id, environment_id)
         segments = list_environment_segments(connection, environment_id)
         document = _document(project_key, environment_key, flags, segments)
         encoded = dump_json_text(document).encode("utf-8")
-        if len(encoded) <= MAX_CACHED_BUNDLE_BYTES and self._generation(key) == generation:
-            self._store_if_current(key, generation, encoded)
+        if len(encoded) <= MAX_BUNDLE_BYTES and self._generation(key) == generation:
+            self._store_if_current(key, generation, encoded, document)
         return document
 
     def invalidate_environment(
@@ -91,8 +102,36 @@ class EvaluationCache:
         with self._lock:
             return self._generations.get(key, 0)
 
-    def _store_if_current(self, key: str, generation: int, encoded: bytes) -> None:
-        """Store encoded when key has not been invalidated since generation.
+    def _remembered(self, key: str, generation: int) -> dict | None:
+        """Return the decoded document for this generation, or None.
+
+        Does not read the database. The caller has already seen the bytes
+        still present, so a TTL expiry is not served from here.
+        """
+        with self._lock:
+            found = self._decoded.get(key)
+            if found is None or found[0] != generation:
+                return None
+            return found[1]
+
+    def _remember(self, key: str, generation: int, document: dict) -> None:
+        """Keep document for generation when that generation is still current.
+
+        Does not read the database. Callers must not mutate document.
+        """
+        with self._lock:
+            if self._generations.get(key, 0) != generation:
+                return
+            self._decoded[key] = (generation, document)
+
+    def _store_if_current(
+        self,
+        key: str,
+        generation: int,
+        encoded: bytes,
+        document: dict,
+    ) -> None:
+        """Store encoded and document when key is still at generation.
 
         The check and the set share the lock with invalidation. Does not
         read the database.
@@ -101,6 +140,7 @@ class EvaluationCache:
             if self._generations.get(key, 0) != generation:
                 return
             self._cache.set(key, encoded, self._ttl_seconds)
+            self._decoded[key] = (generation, document)
 
     def drop(self, key: str) -> None:
         """Bump key's generation and delete the cached bytes.
@@ -110,6 +150,7 @@ class EvaluationCache:
         """
         with self._lock:
             self._generations[key] = self._generations.get(key, 0) + 1
+            self._decoded.pop(key, None)
             self._cache.delete(key)
 
 
@@ -124,6 +165,54 @@ class _DropGeneration:
     def __call__(self) -> None:
         """Bump the generation and delete the key."""
         self._owner.drop(self._key)
+
+
+def require_bundle_within_cap(
+    connection: Connection,
+    project_id: int,
+    environment_id: int,
+    project_key: str,
+    environment_key: str,
+) -> None:
+    """Raise ValidationError when this environment's bundle exceeds the cap.
+
+    Uses the same document the cache stores. Does not commit and does not
+    write the cache. Call it inside the write's transaction so a failure
+    rolls the write back.
+    """
+    flags = load_bundle_flags(connection, project_id, environment_id)
+    segments = list_environment_segments(connection, environment_id)
+    document = _document(project_key, environment_key, flags, segments)
+    encoded = dump_json_text(document).encode("utf-8")
+    if len(encoded) > MAX_BUNDLE_BYTES:
+        raise ValidationError(
+            "The evaluation bundle is too large.",
+            details=[
+                {
+                    "field": "bundle",
+                    "message": "An environment bundle can be at most 8 MiB.",
+                }
+            ],
+        )
+
+
+def require_project_bundles(
+    connection: Connection,
+    project_id: int,
+    project_key: str,
+) -> None:
+    """Raise ValidationError when any environment bundle in the project is over the cap.
+
+    A project with no environments returns. Does not commit.
+    """
+    for environment_id, environment_key in list_environment_ids_and_keys(connection, project_id):
+        require_bundle_within_cap(
+            connection,
+            project_id,
+            environment_id,
+            project_key,
+            environment_key,
+        )
 
 
 def cache_key(project_key: str, environment_key: str) -> str:

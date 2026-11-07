@@ -40,7 +40,9 @@ MAX_SEGMENTS_PER_ENVIRONMENT = 200
 MIN_JWT_SECRET_BYTES = 32
 ROLLOUT_WEIGHT_TOTAL = 100000
 DEFAULT_EVAL_TTL_SECONDS = 5
-MAX_CACHED_BUNDLE_BYTES = 1024 * 1024
+# One environment's evaluation document. A write that would leave a bundle
+# over this size is rejected. A bundle already stored above it still loads.
+MAX_BUNDLE_BYTES = 8 * 1024 * 1024
 # The requested flag counts as depth 1. A flag past this depth is not walked.
 MAX_PREREQUISITE_DEPTH = 10
 # One configuration may name this many other flags. A wider list is rejected

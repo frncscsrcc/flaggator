@@ -35,7 +35,7 @@ from domain.validation import (
 )
 from repositories.db import Connection
 from repositories.environments import EnvironmentRow, find_environment
-from repositories.eval_cache import EvaluationCache
+from repositories.eval_cache import EvaluationCache, require_bundle_within_cap
 from repositories.flag_configs import (
     FlagConfigRow,
     find_config,
@@ -163,6 +163,13 @@ def replace_targeting(
             _audit_document(updated),
         )
         evaluation_cache.invalidate_environment(connection, project.key, environment.key)
+        require_bundle_within_cap(
+            connection,
+            project.id,
+            environment.id,
+            project.key,
+            environment.key,
+        )
     return updated
 
 

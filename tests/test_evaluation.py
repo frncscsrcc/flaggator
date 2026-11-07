@@ -6,6 +6,7 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 _SRC = Path(__file__).resolve().parents[1] / "src"
 if str(_SRC) not in sys.path:
@@ -301,10 +302,11 @@ class EvaluationTests(unittest.TestCase):
         self.assertEqual(after_status, "200 OK")
         self.assertEqual([item["flag_key"] for item in after["decisions"]], ["alpha", "checkout-v2"])
 
-    def test_a_bundle_over_one_mebibyte_is_not_stored(self) -> None:
-        """A document larger than 1 MiB is returned and left out of the cache.
+    def test_a_bundle_over_the_cap_is_not_stored(self) -> None:
+        """A document over the bundle cap is returned and left out of the cache.
 
-        A small document is stored under the evaluation key.
+        A small document is stored under the evaluation key. The second load
+        of that small document does not parse the cached bytes again.
         """
         self.seed()
         small = self.load_bundle()
@@ -312,9 +314,47 @@ class EvaluationTests(unittest.TestCase):
         self.assertEqual(small["project_key"], "shop")
         self.memory.delete(cache_key("shop", "prod"))
         self.store_huge_variation()
-        large = self.load_bundle()
+        with patch("repositories.eval_cache.MAX_BUNDLE_BYTES", 64 * 1024):
+            large = self.load_bundle()
         self.assertIsNone(self.memory.get(cache_key("shop", "prod")))
         self.assertEqual(large["flags"][0]["key"], "checkout-v2")
+
+    def test_a_cached_bundle_is_not_parsed_twice(self) -> None:
+        """The second load of one generation returns the decoded document."""
+        self.seed()
+        connection = self.database.connect()
+        try:
+            row = connection.execute(
+                """
+                SELECT projects.id AS project_id, environments.id AS environment_id
+                  FROM environments
+                  JOIN projects ON projects.id = environments.project_id
+                 WHERE projects.`key` = ? AND environments.`key` = ?
+                """,
+                ("shop", "prod"),
+            ).fetchone()
+            self.assertIsNotNone(row)
+            assert row is not None
+            cache = EvaluationCache(self.memory, 5)
+            cache.load_document(
+                connection,
+                int(row["project_id"]),
+                int(row["environment_id"]),
+                "shop",
+                "prod",
+            )
+            with patch("repositories.eval_cache.json.loads") as loads:
+                again = cache.load_document(
+                    connection,
+                    int(row["project_id"]),
+                    int(row["environment_id"]),
+                    "shop",
+                    "prod",
+                )
+            self.assertEqual(again["environment_key"], "prod")
+            loads.assert_not_called()
+        finally:
+            connection.close()
 
     def seed(self) -> None:
         """Create prod and the checkout-v2 flag. Does not enable it."""

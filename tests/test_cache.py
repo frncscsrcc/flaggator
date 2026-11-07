@@ -53,6 +53,23 @@ class MemoryCacheTests(unittest.TestCase):
         self.assertEqual(cache.get("b"), b"b")
         self.assertEqual(cache.get("c"), b"c")
 
+    def test_byte_budget_drops_the_soonest_deadline(self) -> None:
+        """A set past the byte budget removes the soonest entry first."""
+        clock = ManualClock()
+        cache = MemoryCache(max_bytes=15, clock=clock)
+        cache.set("a", b"0123456789", ttl_seconds=10)
+        cache.set("b", b"0123456789", ttl_seconds=30)
+        self.assertIsNone(cache.get("a"))
+        self.assertEqual(cache.get("b"), b"0123456789")
+
+    def test_a_value_larger_than_the_budget_is_not_stored(self) -> None:
+        """One value that cannot fit the budget leaves the map unchanged."""
+        cache = MemoryCache(max_bytes=4)
+        cache.set("a", b"abcd", ttl_seconds=10)
+        cache.set("b", b"0123456789", ttl_seconds=10)
+        self.assertEqual(cache.get("a"), b"abcd")
+        self.assertIsNone(cache.get("b"))
+
     def test_non_positive_ttl_is_rejected(self) -> None:
         """set refuses a TTL that would already be expired."""
         cache = MemoryCache()

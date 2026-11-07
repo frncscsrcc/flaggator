@@ -42,7 +42,7 @@ from repositories.environments import (
     list_environment_ids,
     list_environment_keys,
 )
-from repositories.eval_cache import EvaluationCache
+from repositories.eval_cache import EvaluationCache, require_project_bundles
 from repositories.flags import (
     FlagRow,
     count_flags,
@@ -109,6 +109,7 @@ def create_flag(
             project.key,
             list_environment_keys(connection, project.id),
         )
+        require_project_bundles(connection, project.id, project.key)
         flag = _load_flag(connection, project.id, key)
         record_change(
             connection,
@@ -210,6 +211,8 @@ def patch_flag(
                 project.key,
                 list_environment_keys(connection, project.id),
             )
+        if tail:
+            require_project_bundles(connection, project.id, project.key)
         updated = _load_flag(connection, project.id, current.key)
         record_change(
             connection,

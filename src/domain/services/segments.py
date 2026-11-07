@@ -22,7 +22,7 @@ from domain.validation import (
 )
 from repositories.db import Connection
 from repositories.environments import EnvironmentRow, find_environment
-from repositories.eval_cache import EvaluationCache
+from repositories.eval_cache import EvaluationCache, require_bundle_within_cap
 from repositories.flag_configs import list_environment_targets
 from repositories.json_text import dump_json_text
 from repositories.projects import ProjectRow, find_project
@@ -82,6 +82,13 @@ def create_segment(
             None,
             None,
             _document(segment),
+        )
+        require_bundle_within_cap(
+            connection,
+            project.id,
+            environment.id,
+            project.key,
+            environment.key,
         )
     return segment
 
@@ -178,6 +185,13 @@ def replace_segment(
             _document(segment),
         )
         evaluation_cache.invalidate_environment(connection, project.key, environment.key)
+        require_bundle_within_cap(
+            connection,
+            project.id,
+            environment.id,
+            project.key,
+            environment.key,
+        )
     return segment
 
 

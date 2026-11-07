@@ -252,9 +252,9 @@ class CacheGenerationTests(unittest.TestCase):
         """set after drop does not put the stale bytes back."""
         cache = MemoryCache()
         evaluation = EvaluationCache(cache, 5)
-        evaluation._store_if_current("eval:shop:prod", 0, b"{}")
+        evaluation._store_if_current("eval:shop:prod", 0, b"{}", {})
         evaluation.drop("eval:shop:prod")
-        evaluation._store_if_current("eval:shop:prod", 0, b"stale")
+        evaluation._store_if_current("eval:shop:prod", 0, b"stale", {"stale": True})
         self.assertIsNone(cache.get("eval:shop:prod"))
 
 
