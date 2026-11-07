@@ -103,6 +103,43 @@ def list_project_events(
     return [_row(row) for row in rows]
 
 
+def list_server_events(
+    connection: Connection,
+    before_id: int | None,
+    limit: int,
+) -> list[AuditEventRow]:
+    """Return rows whose project key is empty, newest id first.
+
+    before_id None starts at the newest row. Otherwise only ids smaller
+    than before_id are returned. Does not commit.
+    """
+    if before_id is None:
+        rows = connection.execute(
+            """
+            SELECT id, at, actor_kind, actor_id, action,
+                   environment_key, flag_key, before_json, after_json
+              FROM audit_events
+             WHERE project_key = ?
+             ORDER BY id DESC
+             LIMIT ?
+            """,
+            ("", limit),
+        ).fetchall()
+    else:
+        rows = connection.execute(
+            """
+            SELECT id, at, actor_kind, actor_id, action,
+                   environment_key, flag_key, before_json, after_json
+              FROM audit_events
+             WHERE project_key = ? AND id < ?
+             ORDER BY id DESC
+             LIMIT ?
+            """,
+            ("", before_id, limit),
+        ).fetchall()
+    return [_row(row) for row in rows]
+
+
 def _row(row: object) -> AuditEventRow:
     """Map one SQL row to AuditEventRow."""
     environment_key = row["environment_key"]

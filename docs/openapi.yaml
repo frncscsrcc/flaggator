@@ -155,7 +155,11 @@ paths:
         or password, a password outside 8 to 1024 characters, a disabled
         user, and an IdP-only user (no password) share the same 401.
         FLAGGATOR_JWT_SECRET must be at least 32 bytes when set. More than
-        10 attempts in 60 seconds from one client address is 429.
+        10 attempts in 60 seconds from one client address is 429, and so is
+        the 10th failed attempt for one email in that window. Success and
+        failure each append a server audit row. A failure does not store
+        the submitted text unless that email is a user, in which case the
+        row stores the user id.
       requestBody:
         required: true
         content:
@@ -177,6 +181,47 @@ paths:
           $ref: "#/components/responses/MethodNotAllowed"
         "429":
           $ref: "#/components/responses/RateLimited"
+        "500":
+          $ref: "#/components/responses/StorageError"
+  /v1/audit:
+    get:
+      tags: [Auth]
+      summary: List server audit events
+      operationId: listServerAudit
+      description: |
+        Rows whose project key is empty: management-token bootstrap,
+        login, and other account changes. Newest first. Requires reader.
+        An SDK token is forbidden. Query `limit` is 1 to 200. Query
+        `cursor` is an event id from `next_cursor`, and the next page is
+        older than that id. These rows are absent from a project audit.
+      parameters:
+        - name: limit
+          in: query
+          required: false
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 200
+        - name: cursor
+          in: query
+          required: false
+          schema:
+            type: string
+      responses:
+        "200":
+          description: One page of server audit events.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AuditPage"
+        "400":
+          $ref: "#/components/responses/ValidationError"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "405":
+          $ref: "#/components/responses/MethodNotAllowed"
         "500":
           $ref: "#/components/responses/StorageError"
   /v1/management-tokens:
@@ -208,9 +253,9 @@ paths:
       summary: Revoke a management token
       operationId: revokeManagementToken
       description: |
-        Sets revoked_at. Requires protected_writer (a management token
-        qualifies). A missing or already revoked id is 404. The next use
-        of that secret is 401.
+        Sets revoked_at. Requires writer and protected_writer (a management
+        token qualifies). A missing or already revoked id is 404. The next
+        use of that secret is 401.
       parameters:
         - $ref: "#/components/parameters/ManagementTokenId"
       responses:
@@ -1511,10 +1556,11 @@ components:
       properties:
         id:
           type: integer
-          minimum: 1
+          minimum: 0
+          description: 0 is the anonymous actor on a failed login.
         kind:
           type: string
-          enum: [management, sdk, user]
+          enum: [management, sdk, user, anonymous]
     AuditEvent:
       type: object
       required:
@@ -1558,6 +1604,10 @@ components:
           type: array
           items:
             $ref: "#/components/schemas/AuditEvent"
+        next_cursor:
+          type: string
+          nullable: true
+          description: Present on GET /v1/audit when a later page exists. An event id, not a public key.
     LoginRequest:
       type: object
       required: [email, password]

@@ -56,6 +56,18 @@ export function listUsers(cursor, search) {
   return request("GET", "/v1/users?" + query);
 }
 
+export function listServerAudit(cursor) {
+  const params = new URLSearchParams();
+  if (cursor !== null && cursor !== undefined && cursor !== "") {
+    params.set("cursor", cursor);
+  }
+  const query = params.toString();
+  if (query === "") {
+    return request("GET", "/v1/audit");
+  }
+  return request("GET", "/v1/audit?" + query);
+}
+
 export function getUser(userId) {
   return request("GET", "/v1/users/" + encodeURIComponent(String(userId)));
 }

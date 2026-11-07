@@ -12,7 +12,7 @@ from domain.models.audit import AuditActor, AuditEvent, AuditQuery
 from domain.models.principal import Principal
 from domain.services.access import require_reader
 from domain.validation import is_public_key
-from repositories.audit import AuditEventRow, append_event, list_project_events
+from repositories.audit import AuditEventRow, append_event, list_project_events, list_server_events
 from repositories.db import Connection
 from repositories.projects import find_project
 
@@ -81,6 +81,25 @@ def list_project_audit(
         query.limit,
     )
     return [_event(row) for row in rows]
+
+
+def list_server_audit(
+    connection: Connection,
+    principal: Principal,
+    limit: int,
+    before_id: int | None,
+) -> tuple[list[AuditEvent], int | None]:
+    """Return server audit rows (empty project key), newest first.
+
+    Raises Forbidden without reader. The second value is the id a later
+    page should pass as before_id, or None when this page is the last.
+    Does not commit.
+    """
+    require_reader(principal)
+    rows = list_server_events(connection, before_id, limit + 1)
+    visible = rows[:limit]
+    next_id = visible[-1].id if len(rows) > limit and visible else None
+    return [_event(row) for row in visible], next_id
 
 
 def _event(row: AuditEventRow) -> AuditEvent:

@@ -3,7 +3,7 @@
 // The cursor for the current page is remembered here because the API
 // only returns the cursor for the following page.
 
-import { ApiError, createUser, listUsers, patchUser } from "./api.js";
+import { ApiError, createUser, listServerAudit, listUsers, patchUser } from "./api.js";
 import { hasRole } from "./roles.js";
 import { token } from "./session.js";
 
@@ -33,6 +33,7 @@ const pager = document.querySelector(".pager");
 const previousButton = document.querySelector("#previous-page");
 const nextButton = document.querySelector("#next-page");
 const pageStatus = document.querySelector("#page-status");
+const auditList = document.querySelector("#server-audit-rows");
 
 const cursors = [null];
 let pageIndex = 0;
@@ -79,6 +80,24 @@ if (token() === "") {
     creator.hidden = false;
   }
   loadPage(0);
+  loadServerAudit();
+}
+
+async function loadServerAudit() {
+  try {
+    const page = await listServerAudit(null);
+    auditList.replaceChildren();
+    for (const item of page.items) {
+      const row = document.createElement("li");
+      const actor = item.actor.kind + " " + item.actor.id;
+      row.textContent = item.at + " — " + item.action + " — " + actor;
+      auditList.append(row);
+    }
+  } catch (error) {
+    if (!(error instanceof ApiError)) {
+      throw error;
+    }
+  }
 }
 
 function showGate(text, href, linkText) {

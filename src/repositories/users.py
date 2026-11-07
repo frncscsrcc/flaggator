@@ -115,6 +115,24 @@ def find_enabled_user_by_id(connection: Connection, user_id: int) -> UserRow | N
     return _from_row(row)
 
 
+def find_user_by_email(connection: Connection, email: str) -> UserRow | None:
+    """Load a user by email, including a disabled row.
+
+    Returns None when the email is missing. Does not commit.
+    """
+    row = connection.execute(
+        """
+        SELECT id, email, name, password_hash, roles_json, created_at, disabled_at
+          FROM users
+         WHERE email = ?
+        """,
+        (email,),
+    ).fetchone()
+    if row is None:
+        return None
+    return _from_row(row)
+
+
 def find_enabled_user_by_email(connection: Connection, email: str) -> UserRow | None:
     """Load an enabled user by email.
 

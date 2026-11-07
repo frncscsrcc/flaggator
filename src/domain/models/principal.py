@@ -9,6 +9,7 @@ from dataclasses import dataclass
 KIND_MANAGEMENT = "management"
 KIND_SDK = "sdk"
 KIND_USER = "user"
+KIND_ANONYMOUS = "anonymous"
 
 ROLE_READER = "reader"
 ROLE_WRITER = "writer"

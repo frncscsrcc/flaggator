@@ -60,7 +60,7 @@ class ProjectTests(unittest.TestCase):
             {"key": "shop", "name": "The Shop"},
         )
         fetched_status, fetched = self.call("GET", "/v1/projects/shop")
-        audit = self.audit_rows()
+        audit = [row for row in self.audit_rows() if row["project_key"] == "shop"]
         self.assertEqual(created_status, "201 Created")
         self.assertEqual(created, {"key": "shop", "name": "The Shop"})
         self.assertEqual(fetched_status, "200 OK")
@@ -87,7 +87,8 @@ class ProjectTests(unittest.TestCase):
         status, body = self.call("POST", "/v1/projects", {"key": "shop", "name": "Other"})
         self.assertEqual(status, "409 Conflict")
         self.assertEqual(body["error"]["code"], "conflict")
-        self.assertEqual(len(self.audit_rows()), 1)
+        project_rows = [row for row in self.audit_rows() if row["project_key"] == "shop"]
+        self.assertEqual(len(project_rows), 1)
         fetched_status, fetched = self.call("GET", "/v1/projects/shop")
         self.assertEqual(fetched_status, "200 OK")
         self.assertEqual(fetched["name"], "The Shop")

@@ -519,6 +519,91 @@ class LoginAndTokenTests(unittest.TestCase):
         )
         return str(body["access_token"])
 
+    def test_server_audit_records_login_and_hides_it_from_a_project(self) -> None:
+        """Login rows are on GET /v1/audit and absent from a project audit.
+
+        A failed attempt for an unknown email does not store that text.
+        The bootstrap row names the new token id and prefix, not the secret.
+        reader plus protected_writer cannot revoke a management token.
+        """
+        failed_status, _failed = self.call(
+            "POST",
+            "/v1/auth/login",
+            {"email": "nobody@example.com", "password": "password-ok-1"},
+            authorization=None,
+            remote="203.0.113.9",
+        )
+        self.call(
+            "POST",
+            "/v1/users",
+            {
+                "email": "ops@example.com",
+                "name": "Ops",
+                "password": "password-ok-1",
+                "roles": ["reader"],
+            },
+        )
+        self.call(
+            "POST",
+            "/v1/users",
+            {
+                "email": "addon@example.com",
+                "name": "Addon",
+                "password": "password-ok-1",
+                "roles": ["reader", "protected_writer"],
+            },
+        )
+        reader = self._login("ops@example.com")
+        status, body = self.call("GET", "/v1/audit", authorization="Bearer " + reader)
+        actions = [item["action"] for item in body["items"]]
+        failed = next(item for item in body["items"] if item["action"] == "user.login_failed")
+        success = next(item for item in body["items"] if item["action"] == "user.login")
+        created = next(item for item in body["items"] if item["action"] == "management_token.create")
+        self.assertEqual(failed_status, "401 Unauthorized")
+        self.assertEqual(status, "200 OK")
+        self.assertIn("user.login_failed", actions)
+        self.assertEqual(failed["actor"], {"id": 0, "kind": "anonymous"})
+        self.assertNotIn("nobody@example.com", json.dumps(failed["after"]))
+        self.assertEqual(failed["after"]["client_address"], "203.0.113.9")
+        self.assertNotIn("user_id", failed["after"])
+        self.assertEqual(success["actor"]["kind"], "user")
+        self.assertEqual(success["after"]["user_id"], success["actor"]["id"])
+        self.assertNotIn("ops@example.com", json.dumps(success))
+        self.assertNotIn(self.token, json.dumps(created))
+        self.assertEqual(created["after"]["prefix"], self.token[:8])
+        self.call("POST", "/v1/projects", {"key": "shop", "name": "Shop"})
+        project_status, project_audit = self.call("GET", "/v1/projects/shop/audit")
+        project_actions = [item["action"] for item in project_audit["items"]]
+        self.assertEqual(project_status, "200 OK")
+        self.assertNotIn("user.login", project_actions)
+        self.assertNotIn("management_token.create", project_actions)
+        page_status, page = self.call(
+            "GET",
+            "/v1/audit?limit=1",
+            authorization="Bearer " + reader,
+        )
+        older_status, older = self.call(
+            "GET",
+            "/v1/audit?limit=1&cursor=" + str(page["next_cursor"]),
+            authorization="Bearer " + reader,
+        )
+        bad_status, bad = self.call("GET", "/v1/audit?cursor=nope")
+        self.assertEqual(page_status, "200 OK")
+        self.assertEqual(older_status, "200 OK")
+        self.assertGreater(page["items"][0]["id"], older["items"][0]["id"])
+        self.assertEqual(bad_status, "400 Bad Request")
+        self.assertEqual(bad["error"]["code"], "validation_error")
+        listed_status, listed = self.call("GET", "/v1/management-tokens")
+        addon = self._login("addon@example.com")
+        denied_status, denied = self.call(
+            "DELETE",
+            f"/v1/management-tokens/{listed['items'][0]['id']}",
+            authorization="Bearer " + addon,
+        )
+        self.assertEqual(listed_status, "200 OK")
+        self.assertEqual(denied_status, "403 Forbidden")
+        self.assertIn("writer", denied["error"]["message"])
+
     def test_list_and_revoke_management_token(self) -> None:
         """List shows the prefix. Delete makes the secret fail as unknown."""
         listed_status, listed = self.call("GET", "/v1/management-tokens")
@@ -599,10 +684,11 @@ class LoginAndTokenTests(unittest.TestCase):
         raw = b""
         if body is not None:
             raw = json.dumps(body).encode("utf-8")
+        path_only, _, query = path.partition("?")
         environ = {
             "REQUEST_METHOD": method,
-            "PATH_INFO": path,
-            "QUERY_STRING": "",
+            "PATH_INFO": path_only,
+            "QUERY_STRING": query,
             "REMOTE_ADDR": remote,
             "CONTENT_LENGTH": str(len(raw)),
             "wsgi.input": io.BytesIO(raw),

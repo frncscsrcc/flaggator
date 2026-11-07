@@ -16,7 +16,14 @@ from domain.errors import (
     ValidationError,
 )
 from domain.jwt import encode_hs256
-from domain.models.principal import ALLOWED_ROLES, ROLE_ADMIN, ROLE_PROTECTED_WRITER, Principal
+from domain.models.principal import (
+    ALLOWED_ROLES,
+    KIND_ANONYMOUS,
+    KIND_USER,
+    ROLE_ADMIN,
+    ROLE_PROTECTED_WRITER,
+    Principal,
+)
 from domain.models.users import (
     AccessToken,
     CreateUser,
@@ -41,6 +48,7 @@ from repositories.db import Connection
 from repositories.users import (
     UserRow,
     find_enabled_user_by_email,
+    find_user_by_email,
     find_user_by_id,
     insert_user,
     list_users,
@@ -220,26 +228,34 @@ def login(
     connection: Connection,
     command: LoginCommand,
     jwt_settings: JwtSettings,
+    client_address: str,
 ) -> AccessToken:
     """Verify email and password and return a local access JWT.
 
     Wrong email, wrong password, disabled user, IdP-only user, and missing
-    JWT secret all raise the same Unauthenticated message. Does not write
-    audit. Does not commit.
+    JWT secret all raise the same Unauthenticated message. Every outcome
+    writes one audit row, so the write itself does not say whether the
+    account exists. The submitted text is stored only as a user id, and
+    only when that email is a user. client_address is the rate-limit
+    address. Does not log the password.
     """
     if jwt_settings.secret == "":
+        _commit_login_audit(connection, None, client_address, False)
         raise Unauthenticated(_LOGIN_MESSAGE)
     try:
         email = require_email(command.email)
-    except ValidationError as exc:
-        raise Unauthenticated(_LOGIN_MESSAGE) from exc
-    if not password_is_checkable(command.password):
-        raise Unauthenticated(_LOGIN_MESSAGE)
-    user = find_enabled_user_by_email(connection, email)
-    if user is None or user.password_hash is None:
-        burn_password_check(command.password)
-        raise Unauthenticated(_LOGIN_MESSAGE)
-    if not verify_password(command.password, user.password_hash):
+    except ValidationError:
+        email = None
+    user = None
+    if email is not None:
+        user = find_user_by_email(connection, email)
+    accepted = (
+        _password_matches(command.password, user)
+        if email is not None and password_is_checkable(command.password)
+        else False
+    )
+    _commit_login_audit(connection, user, client_address, accepted)
+    if not accepted or user is None:
         raise Unauthenticated(_LOGIN_MESSAGE)
     now = int(time.time())
     expires_in = jwt_settings.ttl_seconds
@@ -259,6 +275,68 @@ def login(
         token_type="bearer",
         expires_in=expires_in,
     )
+
+
+def _password_matches(password: str, user: UserRow | None) -> bool:
+    """Return True when password matches an enabled user that has a hash.
+
+    The caller has already checked that password is long enough to verify
+    and that the email was well formed. A missing user, a disabled user,
+    and an IdP-only user burn one scrypt check and return False. Does not
+    write.
+    """
+    if user is None or user.password_hash is None or user.disabled_at is not None:
+        burn_password_check(password)
+        return False
+    return verify_password(password, user.password_hash)
+
+
+def _commit_login_audit(
+    connection: Connection,
+    user: UserRow | None,
+    client_address: str,
+    accepted: bool,
+) -> None:
+    """Append the login row and commit it.
+
+    accepted selects user.login and the user as actor. A failure is
+    user.login_failed with an anonymous actor. The document has the client
+    address and, when user is not None, that user's id. Does not store the
+    password or the submitted email text.
+    """
+    after: dict[str, object] = {"client_address": client_address}
+    if user is not None:
+        after["user_id"] = user.id
+    if accepted and user is not None:
+        actor = Principal(
+            credential_id=user.id,
+            kind=KIND_USER,
+            environment_id=None,
+            prefix="",
+            roles=user.roles,
+        )
+        action = "user.login"
+    else:
+        actor = Principal(
+            credential_id=0,
+            kind=KIND_ANONYMOUS,
+            environment_id=None,
+            prefix="",
+            roles=(),
+        )
+        action = "user.login_failed"
+    document = json.dumps(after, ensure_ascii=False, separators=(",", ":"), sort_keys=True)
+    with connection.transaction():
+        record_change(
+            connection,
+            actor,
+            action,
+            _AUDIT_PROJECT,
+            None,
+            None,
+            None,
+            document,
+        )
 
 
 def require_email(value: str) -> str:

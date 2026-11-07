@@ -91,12 +91,15 @@ class BootstrapTests(unittest.TestCase):
             try:
                 row = connection.execute(
                     """
-                    SELECT kind, secret_hash, prefix, environment_id
+                    SELECT id, kind, secret_hash, prefix, environment_id
                       FROM api_credentials
                     """
                 ).fetchone()
                 audit = connection.execute(
-                    "SELECT id FROM audit_events"
+                    """
+                    SELECT actor_kind, actor_id, action, after_json
+                      FROM audit_events
+                    """
                 ).fetchall()
             finally:
                 connection.close()
@@ -107,7 +110,12 @@ class BootstrapTests(unittest.TestCase):
         self.assertEqual(row["secret_hash"], hash_token(token))
         self.assertNotEqual(row["secret_hash"], token)
         self.assertEqual(row["prefix"], token[:8])
-        self.assertEqual(audit, [])
+        self.assertEqual(len(audit), 1)
+        self.assertEqual(audit[0]["action"], "management_token.create")
+        self.assertEqual(audit[0]["actor_kind"], "management")
+        self.assertEqual(audit[0]["actor_id"], row["id"])
+        self.assertEqual(json.loads(audit[0]["after_json"]), {"id": row["id"], "prefix": token[:8]})
+        self.assertNotIn(token, audit[0]["after_json"])
 
     def test_main_bootstrap_argument_uses_the_sqlite_path(self) -> None:
         """python -m main bootstrap writes a token and does not start the listener."""
@@ -261,6 +269,7 @@ class AuthenticationTests(unittest.TestCase):
                 """
                 SELECT actor_kind, actor_id, action, project_key, after_json
                   FROM audit_events
+                 WHERE action = 'project.create'
                 """
             ).fetchone()
             with self.assertRaises(RuntimeError):
@@ -277,7 +286,10 @@ class AuthenticationTests(unittest.TestCase):
                     )
                     raise RuntimeError("fail the transaction")
             remaining = connection.execute(
-                "SELECT project_key FROM audit_events"
+                """
+                SELECT project_key FROM audit_events
+                 WHERE action = 'project.create'
+                """
             ).fetchall()
         finally:
             connection.close()

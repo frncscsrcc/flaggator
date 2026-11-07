@@ -27,7 +27,12 @@ def login(connection: Connection, request: Request, jwt_settings: JwtSettings) -
 
     Returns 200. Does not require a principal. Domain failures propagate.
     """
-    token = user_service.login(connection, _login_command(request), jwt_settings)
+    token = user_service.login(
+        connection,
+        _login_command(request),
+        jwt_settings,
+        request.client_address,
+    )
     return Response(
         status=200,
         body={

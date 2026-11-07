@@ -9,12 +9,13 @@ import secrets
 from domain.clock import utc_timestamp
 from domain.errors import NotFound
 from domain.models.principal import KIND_MANAGEMENT, Principal
-from domain.services.access import require_protected_writer, require_reader
+from domain.services.access import require_protected_writer, require_reader, require_writer
 from domain.services.audit import record_change
 from repositories.credentials import (
     ManagementTokenRow,
     insert_credential,
     list_management_tokens,
+    prefix_of,
     revoke_management_token,
 )
 from repositories.db import Connection
@@ -27,18 +28,41 @@ _TOKEN_BYTES = 32
 def issue_management_token(connection: Connection) -> str:
     """Create a management token and return the plaintext secret once.
 
-    Stores only the hash and a prefix. Does not commit. Does not write an
-    audit row, because that row would have to omit the only copy of the
-    secret the operator has not seen yet. The caller prints the return
-    value and does not log it.
+    Stores only the hash and a prefix. The audit row names the new id and
+    prefix and does not contain the secret. The actor is the new token.
+    Does not commit. The caller prints the return value and does not log it.
     """
     token = secrets.token_urlsafe(_TOKEN_BYTES)
-    insert_credential(
+    prefix = prefix_of(token)
+    credential_id = insert_credential(
         connection,
         kind=KIND_MANAGEMENT,
         token=token,
         environment_id=None,
         created_at=utc_timestamp(),
+    )
+    actor = Principal(
+        credential_id=credential_id,
+        kind=KIND_MANAGEMENT,
+        environment_id=None,
+        prefix=prefix,
+        roles=(),
+    )
+    document = json.dumps(
+        {"id": credential_id, "prefix": prefix},
+        ensure_ascii=False,
+        separators=(",", ":"),
+        sort_keys=True,
+    )
+    record_change(
+        connection,
+        actor,
+        "management_token.create",
+        _AUDIT_PROJECT,
+        None,
+        None,
+        None,
+        document,
     )
     return token
 
@@ -62,10 +86,11 @@ def revoke_management_token_now(
 ) -> None:
     """Revoke one management token.
 
-    Raises Forbidden without protected_writer. Raises NotFound when the id
-    is missing or already revoked. The audit document has the id and the
-    prefix, never the secret. Does not print the secret.
+    Raises Forbidden without writer and protected_writer. Raises NotFound
+    when the id is missing or already revoked. The audit document has the
+    id and the prefix, never the secret. Does not print the secret.
     """
+    require_writer(principal)
     require_protected_writer(principal)
     with connection.transaction():
         rows = list_management_tokens(connection)

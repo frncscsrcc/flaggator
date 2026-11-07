@@ -6,7 +6,7 @@ does not parse tokens and does not execute SQL. Management routes receive
 the connection the adapter opened.
 """
 
-from api.audit import list_audit
+from api.audit import list_audit, list_server_audit
 from api.environments import create_environment, issue_client_id, list_environments, patch_environment
 from api.evaluation import evaluate_all, evaluate_one, read_config
 from api.flags import create_flag, get_flag, list_flags, patch_flag
@@ -168,6 +168,10 @@ def _management_route(
         if len(parts) == 4:
             return _one_management_token(request, session[0], session[1], parts[3])
         return route_not_found()
+    if parts[2] == "audit" and len(parts) == 3:
+        if request.method != "GET":
+            return method_not_allowed("GET")
+        return list_server_audit(principal, connection, request)
     if parts[2] == "users":
         if len(parts) == 3:
             return _users_collection(request, session[0], session[1])
