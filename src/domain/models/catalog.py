@@ -70,6 +70,20 @@ class PatchEnvironment:
 
 
 @dataclass(frozen=True)
+class ProjectListQuery:
+    """Page window for projects ordered by key.
+
+    after_key excludes that key and every key before it. None starts at the
+    first key. search None lists every project in that window. A string
+    keeps projects whose name or key contains it.
+    """
+
+    limit: int
+    after_key: str | None
+    search: str | None
+
+
+@dataclass(frozen=True)
 class KeysetQuery:
     """How far a list should read.
 

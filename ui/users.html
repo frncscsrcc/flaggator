@@ -1,0 +1,82 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Flaggator.dev — Users</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;600&family=Poppins:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body data-page="users">
+  <div id="shell-header"></div>
+  <main class="page wide">
+    <h1>Users</h1>
+    <p id="users-message" class="login-message" role="status"></p>
+    <div class="users">
+      <details class="creator" hidden>
+        <summary id="user-form-title">New user</summary>
+        <form id="user-form" class="editor" action="#">
+          <div class="creator-grid">
+            <div>
+              <label for="email">Email</label>
+              <input id="email" name="email" type="email" autocomplete="off">
+              <p class="hint">Required. It cannot be changed later.</p>
+            </div>
+            <div>
+              <label for="name">Name</label>
+              <input id="name" name="name" type="text" autocomplete="off">
+            </div>
+            <div>
+              <label for="password">Password</label>
+              <input id="password" name="password" type="password" autocomplete="new-password">
+              <p class="hint">On create, empty means an identity-provider account. On edit, empty keeps the current password.</p>
+            </div>
+          </div>
+          <span class="label">Roles</span>
+          <div class="checks">
+            <label><input type="checkbox" name="roles" value="reader"> Reader</label>
+            <label><input type="checkbox" name="roles" value="writer"> Writer</label>
+            <label><input type="checkbox" name="roles" value="protected_writer"> Protected writer</label>
+            <label><input type="checkbox" name="roles" value="admin"> Admin</label>
+          </div>
+          <div id="disabled-field" class="checks" hidden>
+            <label><input id="disabled" type="checkbox" name="disabled"> Disabled</label>
+          </div>
+          <button id="save-user" type="submit" class="button">Create</button>
+          <button id="cancel-edit" type="button" class="button quiet" hidden>Cancel</button>
+        </form>
+      </details>
+      <form id="user-search" class="finder" action="#" autocomplete="off">
+        <label class="visually-hidden" for="user-query">Search</label>
+        <input id="user-query" type="text" name="search" autocomplete="off" placeholder="Name or email">
+        <button type="submit" class="button">Search</button>
+      </form>
+      <section class="panel" aria-labelledby="user-list">
+        <h2 id="user-list" class="visually-hidden">Accounts</h2>
+        <table>
+          <thead>
+            <tr>
+              <th>Name</th>
+              <th>Email</th>
+              <th>Roles</th>
+              <th>Status</th>
+              <th>Actions</th>
+            </tr>
+          </thead>
+          <tbody id="user-rows"></tbody>
+        </table>
+      </section>
+      <nav class="pager" aria-label="Pages">
+        <button id="previous-page" type="button" class="button quiet" disabled>Previous</button>
+        <p id="page-status"></p>
+        <button id="next-page" type="button" class="button quiet" disabled>Next</button>
+      </nav>
+    </div>
+  </main>
+  <div id="shell-footer"></div>
+  <script type="module" src="shell.js"></script>
+  <script type="module" src="users.js"></script>
+</body>
+</html>

@@ -1,0 +1,70 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Flaggator.dev — Projects</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;600&family=Poppins:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body data-page="projects">
+  <div id="shell-header"></div>
+  <main class="page wide">
+    <h1>Projects</h1>
+    <p id="projects-message" class="login-message" role="status"></p>
+    <div class="projects">
+      <details class="creator" hidden>
+        <summary id="project-form-title">New project</summary>
+        <form id="project-form" class="editor" action="#">
+          <div class="creator-grid">
+            <div>
+              <label for="key">Key</label>
+              <input id="key" name="key" type="text" autocomplete="off" spellcheck="false">
+              <p class="hint">Lowercase letters, digits, and single hyphens. It cannot be changed later.</p>
+            </div>
+            <div>
+              <label for="name">Name</label>
+              <input id="name" name="name" type="text" autocomplete="off">
+            </div>
+          </div>
+          <span class="label">Environments</span>
+          <p id="environment-hint" class="hint">Optional. The project is created first, then each environment, in order. An empty row is skipped.</p>
+          <div id="environment-rows"></div>
+          <button id="add-environment" type="button" class="button quiet">Add environment</button>
+          <button id="save-project" type="submit" class="button">Create</button>
+          <button id="cancel-edit" type="button" class="button quiet" hidden>Cancel</button>
+        </form>
+      </details>
+      <form id="project-search" class="finder" action="#" autocomplete="off">
+        <label class="visually-hidden" for="project-query">Search</label>
+        <input id="project-query" type="text" name="search" autocomplete="off" placeholder="Name or key">
+        <button type="submit" class="button">Search</button>
+      </form>
+      <section class="panel" aria-labelledby="project-list">
+        <h2 id="project-list" class="visually-hidden">Projects</h2>
+        <table>
+          <thead>
+            <tr>
+              <th>Key</th>
+              <th>Name</th>
+              <th>Environments</th>
+              <th>Actions</th>
+            </tr>
+          </thead>
+          <tbody id="project-rows"></tbody>
+        </table>
+      </section>
+      <nav class="pager" aria-label="Pages">
+        <button id="previous-page" type="button" class="button quiet" disabled>Previous</button>
+        <p id="page-status"></p>
+        <button id="next-page" type="button" class="button quiet" disabled>Next</button>
+      </nav>
+    </div>
+  </main>
+  <div id="shell-footer"></div>
+  <script type="module" src="shell.js"></script>
+  <script type="module" src="projects.js"></script>
+</body>
+</html>

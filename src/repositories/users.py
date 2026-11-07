@@ -138,13 +138,17 @@ def list_users(
     connection: Connection,
     after_id: int | None,
     limit: int,
+    search: str | None,
 ) -> list[User]:
     """Return users ordered by id, at most limit rows.
 
     after_id excludes that id and every smaller id. None starts at the
-    first. Does not commit and does not include password_hash.
+    first. search None returns every row in that window. A string keeps
+    rows whose name or email contains it. Does not commit and does not
+    include password_hash.
     """
-    if after_id is None:
+    pattern = None if search is None else _like_contains(search)
+    if pattern is None and after_id is None:
         rows = connection.execute(
             """
             SELECT id, email, name, roles_json, created_at, disabled_at
@@ -154,7 +158,7 @@ def list_users(
             """,
             (limit,),
         ).fetchall()
-    else:
+    elif pattern is None:
         rows = connection.execute(
             """
             SELECT id, email, name, roles_json, created_at, disabled_at
@@ -165,7 +169,40 @@ def list_users(
             """,
             (after_id, limit),
         ).fetchall()
+    elif after_id is None:
+        rows = connection.execute(
+            """
+            SELECT id, email, name, roles_json, created_at, disabled_at
+              FROM users
+             WHERE name LIKE ? ESCAPE '!' OR email LIKE ? ESCAPE '!'
+             ORDER BY id
+             LIMIT ?
+            """,
+            (pattern, pattern, limit),
+        ).fetchall()
+    else:
+        rows = connection.execute(
+            """
+            SELECT id, email, name, roles_json, created_at, disabled_at
+              FROM users
+             WHERE id > ?
+               AND (name LIKE ? ESCAPE '!' OR email LIKE ? ESCAPE '!')
+             ORDER BY id
+             LIMIT ?
+            """,
+            (after_id, pattern, pattern, limit),
+        ).fetchall()
     return [_public_user(row) for row in rows]
+
+
+def _like_contains(value: str) -> str:
+    """Return a LIKE pattern that matches value as a substring.
+
+    ! is the escape character on both engines. % and _ in value match those
+    characters rather than wildcards.
+    """
+    escaped = value.replace("!", "!!").replace("%", "!%").replace("_", "!_")
+    return "%" + escaped + "%"
 
 
 def _public_user(row: object) -> User:

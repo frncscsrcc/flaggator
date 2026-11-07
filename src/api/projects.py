@@ -7,7 +7,7 @@ result to a response. SQL and authorization stay in the service.
 from api.body import read_json_object, require_string_fields
 from api.paging import page_body, page_request
 from api.request import Request, Response
-from domain.models.catalog import CreateNamed
+from domain.models.catalog import CreateNamed, ProjectListQuery
 from domain.models.principal import Principal
 from domain.services import projects as project_service
 from repositories.db import Connection
@@ -30,14 +30,31 @@ def create_project(principal: Principal, connection: Connection, request: Reques
 
 
 def list_projects(principal: Principal, connection: Connection, request: Request) -> Response:
-    """List projects for the query limit and cursor.
+    """List projects for the query limit, cursor, and optional search.
 
     Returns 200. items is empty when no project matches. next_cursor is
-    null on the last page. Does not commit.
+    null on the last page. search matches a substring of name or key, and
+    the cursor continues that same search. Does not commit.
     """
-    page = project_service.list_projects_page(connection, principal, page_request(request))
+    window = page_request(request)
+    page = project_service.list_projects_page(
+        connection,
+        principal,
+        ProjectListQuery(
+            limit=window.limit,
+            after_key=window.after_key,
+            search=_search_text(request.query.get("search")),
+        ),
+    )
     items = [{"key": item.key, "name": item.name} for item in page.items]
     return Response(status=200, body=page_body(items, page.next_key))
+
+
+def _search_text(raw: str | None) -> str | None:
+    """Return the search text, or None when the parameter is absent or empty."""
+    if raw is None or raw == "":
+        return None
+    return raw
 
 
 def get_project(principal: Principal, connection: Connection, project_key: str) -> Response:

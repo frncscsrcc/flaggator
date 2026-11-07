@@ -1,7 +1,7 @@
 """Request and response values the WSGI adapter and the controllers share.
 
-A controller returns a Response. The adapter encodes it as JSON bytes.
-These types do not read the socket.
+A controller returns a Response. The adapter encodes body as JSON. raw is
+the alternative for a console file. These types do not read the socket.
 """
 
 from dataclasses import dataclass
@@ -27,9 +27,12 @@ class Request:
 class Response:
     """An HTTP response before it is written to the socket.
 
-    status is the numeric code. body is the JSON document. Building a
-    Response does not send it.
+    status is the numeric code. body is the JSON document. raw, when set,
+    is sent instead of body and content_type is the header value. Building
+    a Response does not send it.
     """
 
     status: int
-    body: dict
+    body: dict | None = None
+    raw: bytes | None = None
+    content_type: str = ""

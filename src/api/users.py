@@ -56,9 +56,10 @@ def list_users(
     connection: Connection,
     request: Request,
 ) -> Response:
-    """List users for the query limit and cursor.
+    """List users for the query limit, cursor, and optional search.
 
-    Returns 200. next_cursor is null on the last page.
+    Returns 200. next_cursor is null on the last page. search matches a
+    substring of name or email, and the cursor continues that same search.
     """
     page = user_service.list_users_page(connection, principal, _page_request(request))
     items = [_user_document(item) for item in page.items]
@@ -190,7 +191,7 @@ def _patch_command(request: Request) -> PatchUser:
 
 
 def _page_request(request: Request) -> UserKeysetQuery:
-    """Read limit and id cursor for the users list."""
+    """Read limit, id cursor, and search for the users list."""
     raw_limit = request.query.get("limit")
     if raw_limit is None:
         limit = DEFAULT_PAGE_LIMIT
@@ -201,7 +202,18 @@ def _page_request(request: Request) -> UserKeysetQuery:
         )
     else:
         limit = require_page_limit(int(raw_limit))
-    return UserKeysetQuery(limit=limit, after_id=_parse_id_cursor(request.query.get("cursor")))
+    return UserKeysetQuery(
+        limit=limit,
+        after_id=_parse_id_cursor(request.query.get("cursor")),
+        search=_search_text(request.query.get("search")),
+    )
+
+
+def _search_text(raw: str | None) -> str | None:
+    """Return the search text, or None when the parameter is absent or empty."""
+    if raw is None or raw == "":
+        return None
+    return raw
 
 
 def _parse_id_cursor(raw: str | None) -> int | None:

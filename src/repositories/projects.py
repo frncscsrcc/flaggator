@@ -62,15 +62,18 @@ def list_projects(
     connection: Connection,
     after_key: str | None,
     limit: int,
+    search: str | None,
 ) -> list[Project]:
     """Return projects ordered by key, at most limit rows.
 
     after_key excludes that key and every key before it. None starts at the
-    first key. An empty table returns an empty list. limit is the caller's
-    row cap, including the extra row a service uses to see a further page.
-    Does not commit.
+    first key. search None returns every row in that window. A string keeps
+    rows whose name or key contains it. An empty table returns an empty
+    list. limit is the caller's row cap, including the extra row a service
+    uses to see a further page. Does not commit.
     """
-    if after_key is None:
+    pattern = None if search is None else _like_contains(search)
+    if pattern is None and after_key is None:
         rows = connection.execute(
             """
             SELECT `key`, name
@@ -80,7 +83,7 @@ def list_projects(
             """,
             (limit,),
         ).fetchall()
-    else:
+    elif pattern is None:
         rows = connection.execute(
             """
             SELECT `key`, name
@@ -91,4 +94,37 @@ def list_projects(
             """,
             (after_key, limit),
         ).fetchall()
+    elif after_key is None:
+        rows = connection.execute(
+            """
+            SELECT `key`, name
+              FROM projects
+             WHERE `key` LIKE ? ESCAPE '!' OR name LIKE ? ESCAPE '!'
+             ORDER BY `key`
+             LIMIT ?
+            """,
+            (pattern, pattern, limit),
+        ).fetchall()
+    else:
+        rows = connection.execute(
+            """
+            SELECT `key`, name
+              FROM projects
+             WHERE `key` > ?
+               AND (`key` LIKE ? ESCAPE '!' OR name LIKE ? ESCAPE '!')
+             ORDER BY `key`
+             LIMIT ?
+            """,
+            (after_key, pattern, pattern, limit),
+        ).fetchall()
     return [Project(key=str(row["key"]), name=str(row["name"])) for row in rows]
+
+
+def _like_contains(value: str) -> str:
+    """Return a LIKE pattern that matches value as a substring.
+
+    ! is the escape character on both engines. % and _ in value match those
+    characters rather than wildcards.
+    """
+    escaped = value.replace("!", "!!").replace("%", "!%").replace("_", "!_")
+    return "%" + escaped + "%"

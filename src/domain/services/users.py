@@ -49,6 +49,9 @@ from repositories.users import (
 
 _LOGIN_MESSAGE = "A valid credential is required."
 _MAX_EMAIL_LENGTH = 320
+# A stored name is at most 256 characters and an email at most 320, so a
+# longer search cannot match either column.
+_MAX_SEARCH_LENGTH = 320
 _AUDIT_PROJECT = ""
 
 
@@ -123,11 +126,13 @@ def list_users_page(
 ) -> UserPage:
     """Return one page of users ordered by id.
 
-    Raises Forbidden for an SDK token and ValidationError for a bad limit.
+    search keeps users whose name or email contains that text. Raises
+    Forbidden for an SDK token and ValidationError for a bad limit or search.
     """
     require_reader(principal)
     limit = require_page_limit(query.limit)
-    rows = list_users(connection, query.after_id, limit + 1)
+    search = _require_search(query.search)
+    rows = list_users(connection, query.after_id, limit + 1, search)
     visible = rows[:limit]
     if len(rows) <= limit:
         next_id = None
@@ -322,6 +327,27 @@ def require_roles(roles: tuple[str, ...]) -> tuple[str, ...]:
         seen.add(role)
         ordered.append(role)
     return tuple(ordered)
+
+
+def _require_search(search: str | None) -> str | None:
+    """Return search when it can be a substring filter.
+
+    None means the list is not filtered. Raises ValidationError when the
+    text is longer than _MAX_SEARCH_LENGTH. Does not read the database.
+    """
+    if search is None:
+        return None
+    if len(search) > _MAX_SEARCH_LENGTH:
+        raise ValidationError(
+            "The search is not valid.",
+            details=[
+                {
+                    "field": "search",
+                    "message": f"Search must be at most {_MAX_SEARCH_LENGTH} characters.",
+                }
+            ],
+        )
+    return search
 
 
 def _to_user(row: UserRow) -> User:

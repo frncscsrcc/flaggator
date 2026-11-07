@@ -53,11 +53,13 @@ Users are global (not nested under a project). Creating and changing users requi
 | Method | Path | Behavior |
 | --- | --- | --- |
 | `POST` | `/v1/users` | Create `{ "email", "name", "roles", "password"? }`. Omitting `password` stores an IdP-only user. 201 returns the user without the password. |
-| `GET` | `/v1/users` | List users as `{ "items", "next_cursor" }`. Each item is `{ "id", "email", "name", "roles", "created_at", "disabled_at" }`. |
+| `GET` | `/v1/users` | List users as `{ "items", "next_cursor" }`. Optional `search` is a substring of `name` or `email`; the cursor continues that same search. Each item is `{ "id", "email", "name", "roles", "created_at", "disabled_at" }`. |
 | `GET` | `/v1/users/{userId}` | Fetch one user. |
 | `PATCH` | `/v1/users/{userId}` | Update name, password, roles, or disabled state. Email is immutable in this milestone. |
 
 `roles` is a list drawn from `reader`, `writer`, `protected_writer`, `admin`. `protected_writer` without `writer` is stored but does not grant writes by itself. `admin` may assign any of these roles. Passwords never appear in responses or audit JSON.
+
+Not implemented: a route the signed-in user calls to change their own password. Only that user can call it, and the body does not name another user. `PATCH /v1/users/{userId}` stays the admin path for someone else's password. The route stays out of OpenAPI until a controller serves it.
 
 ## Controller rules
 
@@ -114,7 +116,7 @@ Base path for catalog resources: `/v1/projects`. Authorization uses the role mat
 | Method | Path | Behavior |
 | --- | --- | --- |
 | `POST` | `/v1/projects` | Create `{ "key", "name" }`. Response is 201 and the same two fields. |
-| `GET` | `/v1/projects` | List projects as `{ "items", "next_cursor" }`. |
+| `GET` | `/v1/projects` | List projects as `{ "items", "next_cursor" }`. Optional `search` is a substring of `name` or `key`; the cursor continues that same search. |
 | `GET` | `/v1/projects/{projectKey}` | Fetch one project. An unknown key is 404. |
 
 ### Environments

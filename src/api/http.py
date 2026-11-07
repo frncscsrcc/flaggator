@@ -8,10 +8,12 @@ import json
 import threading
 import traceback
 from collections.abc import Callable
+from pathlib import Path
 from socketserver import ThreadingMixIn
 from urllib.parse import parse_qs
 from wsgiref.simple_server import WSGIServer, make_server
 
+from api.console import console_response, default_console_directory
 from api.login_limit import LoginLimiter
 from api.request import Request, Response
 from api.routes import authorize, dispatch, requires_credential
@@ -103,9 +105,10 @@ class Application:
     """The WSGI callable.
 
     GET /health does not use the database. Login and client evaluation do
-    not use a bearer token. Any other path authenticates a bearer token
-    against the database before the controller runs. Calling this object
-    does not listen. serve() does that.
+    not use a bearer token. A path outside /health and /v1 is a console
+    file, or a 404, and does not authenticate. Any other path authenticates
+    a bearer token against the database before the controller runs. Calling
+    this object does not listen. serve() does that.
     """
 
     def __init__(
@@ -115,14 +118,18 @@ class Application:
         jwt_settings: JwtSettings | None = None,
         client_eval_limit: int = 60,
         client_eval_window_seconds: float = 60,
+        console_directory: Path | None = None,
+        headless: bool = False,
     ) -> None:
         """Keep database, the evaluation cache, and JWT verify settings.
 
         database may be None only when the caller will request GET /health.
         When evaluation_cache is omitted, a cache that stores nothing is
-        used so a write still registers a harmless delete. Composition is
-        the place that selects the process cache and JWT settings. Does not
-        open a connection.
+        used so a write still registers a harmless delete. headless skips
+        the console directory. When console_directory is omitted and
+        headless is false, the ui/ tree next to the sources is used.
+        Composition is the place that selects the process cache and JWT
+        settings. Does not open a connection.
         """
         self._database = database
         if evaluation_cache is None:
@@ -135,6 +142,13 @@ class Application:
             limit=client_eval_limit,
             window_seconds=client_eval_window_seconds,
         )
+        self._headless = headless
+        if headless:
+            self._console_directory = None
+        elif console_directory is None:
+            self._console_directory = default_console_directory()
+        else:
+            self._console_directory = console_directory
 
     def __call__(self, environ: dict, start_response: StartResponse) -> list[bytes]:
         """Handle one request and return the body as a list of byte strings.
@@ -145,7 +159,15 @@ class Application:
         """
         try:
             request = request_from_environ(environ)
-            if request.path == "/v1/auth/login":
+            static = console_response(
+                request.method,
+                request.path,
+                self._console_directory,
+                self._headless,
+            )
+            if static is not None:
+                response = static
+            elif request.path == "/v1/auth/login":
                 response = self._login(request)
             elif request.path == "/v1/client-evaluate":
                 response = self._client_evaluate(request)
@@ -278,16 +300,22 @@ def response_for_domain_error(error: DomainError) -> Response:
 
 
 def encode(start_response: StartResponse, response: Response) -> list[bytes]:
-    """Send the status line and return the JSON body.
+    """Send the status line and return the body.
 
-    Content-Type is application/json. Does not include a stack trace.
+    raw is sent with the content type on the response. Otherwise the body
+    is JSON. Does not include a stack trace.
     """
-    payload = json.dumps(response.body).encode("utf-8")
+    if response.raw is not None:
+        payload = response.raw
+        content_type = response.content_type
+    else:
+        payload = json.dumps(response.body).encode("utf-8")
+        content_type = "application/json; charset=utf-8"
     reason = _REASONS.get(response.status, "Error")
     start_response(
         f"{response.status} {reason}",
         [
-            ("Content-Type", "application/json; charset=utf-8"),
+            ("Content-Type", content_type),
             ("Content-Length", str(len(payload))),
         ],
     )

@@ -5,6 +5,7 @@ import json
 import tempfile
 import unittest
 from pathlib import Path
+from urllib.parse import urlencode
 import sys
 
 _SRC = Path(__file__).resolve().parents[1] / "src"
@@ -161,12 +162,143 @@ class UsersTests(unittest.TestCase):
         self.assertEqual(conflict_status, "409 Conflict")
         self.assertEqual(conflict["error"]["code"], "conflict")
 
+    def test_search_matches_name_or_email(self) -> None:
+        """search is a substring of name or email and pages with that filter."""
+        ada_status, ada = self.call(
+            "POST",
+            "/v1/users",
+            {
+                "email": "ada@alpha.example",
+                "name": "Ada Lovelace",
+                "password": "password1",
+                "roles": ["reader"],
+            },
+        )
+        adam_status, adam = self.call(
+            "POST",
+            "/v1/users",
+            {
+                "email": "adam@beta.example",
+                "name": "Adam",
+                "password": "password1",
+                "roles": ["reader"],
+            },
+        )
+        zed_status, _zed = self.call(
+            "POST",
+            "/v1/users",
+            {
+                "email": "zed@gamma.example",
+                "name": "Zed",
+                "password": "password1",
+                "roles": ["reader"],
+            },
+        )
+        by_name_status, by_name = self.call(
+            "GET",
+            "/v1/users",
+            query=urlencode({"search": "LOVE"}),
+        )
+        by_email_status, by_email = self.call(
+            "GET",
+            "/v1/users",
+            query=urlencode({"search": "beta.example"}),
+        )
+        first_status, first = self.call(
+            "GET",
+            "/v1/users",
+            query=urlencode({"search": "ada", "limit": "1"}),
+        )
+        second_status, second = self.call(
+            "GET",
+            "/v1/users",
+            query=urlencode({"search": "ada", "limit": "1", "cursor": first["next_cursor"]}),
+        )
+        self.assertEqual(ada_status, "201 Created")
+        self.assertEqual(adam_status, "201 Created")
+        self.assertEqual(zed_status, "201 Created")
+        self.assertEqual(by_name_status, "200 OK")
+        self.assertEqual([item["id"] for item in by_name["items"]], [ada["id"]])
+        self.assertEqual(by_email_status, "200 OK")
+        self.assertEqual([item["id"] for item in by_email["items"]], [adam["id"]])
+        self.assertEqual(first_status, "200 OK")
+        self.assertEqual([item["id"] for item in first["items"]], [ada["id"]])
+        self.assertIsNotNone(first["next_cursor"])
+        self.assertEqual(second_status, "200 OK")
+        self.assertEqual([item["id"] for item in second["items"]], [adam["id"]])
+        self.assertIsNone(second["next_cursor"])
+
+    def test_search_treats_like_wildcards_as_literal(self) -> None:
+        """% and _ in search match those characters, not every row."""
+        percent_status, percent = self.call(
+            "POST",
+            "/v1/users",
+            {
+                "email": "pct@example.com",
+                "name": "100%",
+                "password": "password1",
+                "roles": ["reader"],
+            },
+        )
+        plain_status, _plain = self.call(
+            "POST",
+            "/v1/users",
+            {
+                "email": "plain@example.com",
+                "name": "100x",
+                "password": "password1",
+                "roles": ["reader"],
+            },
+        )
+        bang_status, bang = self.call(
+            "POST",
+            "/v1/users",
+            {
+                "email": "bang@example.com",
+                "name": "a!b",
+                "password": "password1",
+                "roles": ["reader"],
+            },
+        )
+        percent_query_status, percent_query = self.call(
+            "GET",
+            "/v1/users",
+            query=urlencode({"search": "%"}),
+        )
+        underscore_status, underscore = self.call(
+            "GET",
+            "/v1/users",
+            query=urlencode({"search": "_"}),
+        )
+        bang_query_status, bang_query = self.call(
+            "GET",
+            "/v1/users",
+            query=urlencode({"search": "a!b"}),
+        )
+        too_long_status, too_long = self.call(
+            "GET",
+            "/v1/users",
+            query=urlencode({"search": "a" * 321}),
+        )
+        self.assertEqual(percent_status, "201 Created")
+        self.assertEqual(plain_status, "201 Created")
+        self.assertEqual(bang_status, "201 Created")
+        self.assertEqual(percent_query_status, "200 OK")
+        self.assertEqual([item["id"] for item in percent_query["items"]], [percent["id"]])
+        self.assertEqual(underscore_status, "200 OK")
+        self.assertEqual(underscore["items"], [])
+        self.assertEqual(bang_query_status, "200 OK")
+        self.assertEqual([item["id"] for item in bang_query["items"]], [bang["id"]])
+        self.assertEqual(too_long_status, "400 Bad Request")
+        self.assertEqual(too_long["error"]["details"][0]["field"], "search")
+
     def call(
         self,
         method: str,
         path: str,
         body: dict | None = None,
         authorization: str | None = "use-token",
+        query: str = "",
     ) -> tuple[str, dict]:
         """Invoke the WSGI app in-process."""
         captured: dict[str, object] = {}
@@ -182,7 +314,7 @@ class UsersTests(unittest.TestCase):
         environ = {
             "REQUEST_METHOD": method,
             "PATH_INFO": path,
-            "QUERY_STRING": "",
+            "QUERY_STRING": query,
             "SERVER_NAME": "127.0.0.1",
             "SERVER_PORT": "8080",
             "SERVER_PROTOCOL": "HTTP/1.1",

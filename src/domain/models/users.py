@@ -53,10 +53,13 @@ class UserKeysetQuery:
     """Page window for users ordered by id.
 
     after_id excludes that id and every smaller id. None starts at the first.
+    search None lists every user in that window. A string keeps users whose
+    name or email contains it.
     """
 
     limit: int
     after_id: int | None
+    search: str | None
 
 
 @dataclass(frozen=True)

@@ -25,6 +25,7 @@ tags:
   - name: SDK tokens
   - name: Audit
   - name: Evaluation
+  - name: Console
 paths:
   /health:
     get:
@@ -39,6 +40,110 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/Health"
+  /login.html:
+    get:
+      tags: [Console]
+      summary: Operator console sign-in page
+      operationId: getConsoleLogin
+      security: []
+      description: |
+        Served from ui/login.html when FLAGGATOR_HEADLESS is omitted, empty,
+        or false. true makes this path a 404. No bearer token. The page calls
+        POST /v1/auth/login on this same origin.
+      responses:
+        "200":
+          description: The sign-in page.
+          content:
+            text/html:
+              schema:
+                type: string
+        "404":
+          $ref: "#/components/responses/NotFound"
+  /styles.css:
+    get:
+      tags: [Console]
+      summary: Operator console stylesheet
+      operationId: getConsoleStyles
+      security: []
+      description: Served from ui/styles.css unless FLAGGATOR_HEADLESS is true.
+      responses:
+        "200":
+          description: The shared stylesheet.
+          content:
+            text/css:
+              schema:
+                type: string
+        "404":
+          $ref: "#/components/responses/NotFound"
+  /login.js:
+    get:
+      tags: [Console]
+      summary: Sign-in page script
+      operationId: getConsoleLoginScript
+      security: []
+      description: Served from ui/login.js unless FLAGGATOR_HEADLESS is true.
+      responses:
+        "200":
+          description: The sign-in module.
+          content:
+            text/javascript:
+              schema:
+                type: string
+        "404":
+          $ref: "#/components/responses/NotFound"
+  /api.js:
+    get:
+      tags: [Console]
+      summary: Console API client
+      operationId: getConsoleApiScript
+      security: []
+      description: |
+        Served from ui/api.js unless FLAGGATOR_HEADLESS is true. Calls the
+        JSON API on this origin and stores the login JWT in memory.
+      responses:
+        "200":
+          description: The fetch module.
+          content:
+            text/javascript:
+              schema:
+                type: string
+        "404":
+          $ref: "#/components/responses/NotFound"
+  /session.js:
+    get:
+      tags: [Console]
+      summary: Console session
+      operationId: getConsoleSessionScript
+      security: []
+      description: |
+        Served from ui/session.js unless FLAGGATOR_HEADLESS is true. Holds
+        the access token in a variable. A reload clears it.
+      responses:
+        "200":
+          description: The session module.
+          content:
+            text/javascript:
+              schema:
+                type: string
+        "404":
+          $ref: "#/components/responses/NotFound"
+  /logo.png:
+    get:
+      tags: [Console]
+      summary: Operator console logo
+      operationId: getConsoleLogo
+      security: []
+      description: Served from ui/logo.png unless FLAGGATOR_HEADLESS is true.
+      responses:
+        "200":
+          description: The logo image.
+          content:
+            image/png:
+              schema:
+                type: string
+                format: binary
+        "404":
+          $ref: "#/components/responses/NotFound"
   /v1/auth/login:
     post:
       tags: [Auth]
@@ -126,12 +231,18 @@ paths:
       tags: [Users]
       summary: List users
       operationId: listUsers
+      description: |
+        One page ordered by id. Optional search is a substring of name or
+        email. % and _ in search match those characters. The cursor continues
+        that same search; a new search starts without a cursor. Requires
+        reader. Passwords are absent.
       parameters:
         - $ref: "#/components/parameters/Limit"
         - $ref: "#/components/parameters/Cursor"
+        - $ref: "#/components/parameters/Search"
       responses:
         "200":
-          description: One page of users, ordered by id. Passwords are absent.
+          description: One page of users, ordered by id. When search is set, only rows whose name or email contains that substring. Passwords are absent.
           content:
             application/json:
               schema:
@@ -243,12 +354,18 @@ paths:
       tags: [Projects]
       summary: List projects
       operationId: listProjects
+      description: |
+        One page ordered by key. Optional search is a substring of name or
+        key. % and _ in search match those characters. The cursor continues
+        that same search; a new search starts without a cursor. Requires
+        reader.
       parameters:
         - $ref: "#/components/parameters/Limit"
         - $ref: "#/components/parameters/Cursor"
+        - $ref: "#/components/parameters/ProjectSearch"
       responses:
         "200":
-          description: One page of projects, ordered by key.
+          description: One page of projects, ordered by key. When search is set, only rows whose name or key contains that substring.
           content:
             application/json:
               schema:
@@ -1182,6 +1299,28 @@ components:
       description: Opaque cursor from a previous page. Clients do not construct it. A missing cursor starts at the first key.
       schema:
         type: string
+    Search:
+      name: search
+      in: query
+      required: false
+      description: |
+        Substring matched against user name or email. Omitted or empty lists
+        every user. % and _ match those characters. Longer than 320
+        characters is 400. A cursor from this list belongs to the same search.
+      schema:
+        type: string
+        maxLength: 320
+    ProjectSearch:
+      name: search
+      in: query
+      required: false
+      description: |
+        Substring matched against project name or key. Omitted or empty lists
+        every project. % and _ match those characters. Longer than 256
+        characters is 400. A cursor from this list belongs to the same search.
+      schema:
+        type: string
+        maxLength: 256
   responses:
     ValidationError:
       description: The request shape or a domain rule was rejected.

@@ -37,6 +37,7 @@ class SettingsTests(unittest.TestCase):
         self.assertEqual(settings.jwt_jwks_url, "")
         self.assertEqual(settings.client_eval_limit, 60)
         self.assertEqual(settings.client_eval_window_seconds, 60)
+        self.assertFalse(settings.headless)
         self.assertNotIn("mysql_password", repr(settings))
         self.assertNotIn("jwt_secret", repr(settings))
 

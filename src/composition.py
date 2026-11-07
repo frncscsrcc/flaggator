@@ -11,6 +11,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import TextIO
 
+from api.console import default_console_directory
 from api.http import Application
 from cache.memory import MemoryCache
 from cache.null import NullCache
@@ -50,6 +51,7 @@ class Settings:
     jwt_jwks_url: str
     client_eval_limit: int
     client_eval_window_seconds: int
+    headless: bool
     migrations_directory: Path
 
     def __repr__(self) -> str:
@@ -64,7 +66,8 @@ class Settings:
             f"jwt_issuer={self.jwt_issuer!r}, jwt_audience={self.jwt_audience!r}, "
             f"jwt_ttl_seconds={self.jwt_ttl_seconds!r}, jwt_jwks_url={self.jwt_jwks_url!r}, "
             f"client_eval_limit={self.client_eval_limit!r}, "
-            f"client_eval_window_seconds={self.client_eval_window_seconds!r})"
+            f"client_eval_window_seconds={self.client_eval_window_seconds!r}, "
+            f"headless={self.headless!r})"
         )
 
 
@@ -125,6 +128,7 @@ def load_settings(environment: Mapping[str, str] | None = None) -> Settings:
             source.get("FLAGGATOR_CLIENT_EVAL_WINDOW_SECONDS", "60"),
             "client_eval_window_seconds",
         ),
+        headless=_headless(source.get("FLAGGATOR_HEADLESS", "")),
         migrations_directory=default_migrations_directory(),
     )
 
@@ -195,6 +199,8 @@ def prepare(settings: Settings) -> Runtime:
             ),
             client_eval_limit=settings.client_eval_limit,
             client_eval_window_seconds=settings.client_eval_window_seconds,
+            console_directory=default_console_directory(),
+            headless=settings.headless,
         ),
     )
 
@@ -226,6 +232,28 @@ def bootstrap_management_token(
     notice_stream.write("Save this token. It will not be shown again.\n")
     secret_stream.write(token + "\n")
     secret_stream.flush()
+
+
+def _headless(raw: str) -> bool:
+    """Return whether the process should skip the operator console.
+
+    Empty and false serve the console. true serves only the API. Any other
+    value raises ValidationError with field headless. Does not look at the
+    filesystem.
+    """
+    if raw == "" or raw == "false":
+        return False
+    if raw == "true":
+        return True
+    raise ValidationError(
+        "The headless setting is not valid.",
+        details=[
+            {
+                "field": "headless",
+                "message": "FLAGGATOR_HEADLESS must be true or false.",
+            }
+        ],
+    )
 
 
 def _jwt_secret(raw: str) -> str:

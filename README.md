@@ -23,6 +23,7 @@ src/domain/services/      use cases and the evaluator
 src/repositories/         SQL, parameter binding, row mapping, evaluation cache-aside
 src/cache/                get / set / delete, memory and null implementations
 src/composition.py        process wiring: database engine and cache
+ui/                       operator console, served by the same process
 docs/                     design documents
 ```
 
@@ -64,6 +65,8 @@ python -m main
 ```
 
 The process listens on `127.0.0.1:8080`. `FLAGGATOR_BIND_HOST`, `FLAGGATOR_BIND_PORT`, and `FLAGGATOR_SQLITE_PATH` change the address and the database file.
+
+The same process serves the operator console. The sign-in page is `http://127.0.0.1:8080/login.html`. `FLAGGATOR_HEADLESS=true` serves only the API; a console path is then 404. Any other value stops startup. Omitted, empty, and `false` serve the console.
 
 ### Docker
 

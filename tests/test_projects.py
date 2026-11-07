@@ -137,6 +137,76 @@ class ProjectTests(unittest.TestCase):
         self.assertEqual([item["key"] for item in second["items"]], ["gamma"])
         self.assertIsNone(second["next_cursor"])
 
+    def test_search_matches_name_or_key(self) -> None:
+        """search is a substring of name or key and pages with that filter."""
+        self.call("POST", "/v1/projects", {"key": "alpha", "name": "The Shop"})
+        self.call("POST", "/v1/projects", {"key": "beta", "name": "Billing"})
+        self.call("POST", "/v1/projects", {"key": "gamma", "name": "Shop front"})
+        by_name_status, by_name = self.call(
+            "GET",
+            "/v1/projects",
+            query=urlencode({"search": "BILL"}),
+        )
+        by_key_status, by_key = self.call(
+            "GET",
+            "/v1/projects",
+            query=urlencode({"search": "alp"}),
+        )
+        first_status, first = self.call(
+            "GET",
+            "/v1/projects",
+            query=urlencode({"search": "shop", "limit": "1"}),
+        )
+        second_status, second = self.call(
+            "GET",
+            "/v1/projects",
+            query=urlencode({"search": "shop", "limit": "1", "cursor": first["next_cursor"]}),
+        )
+        self.assertEqual(by_name_status, "200 OK")
+        self.assertEqual([item["key"] for item in by_name["items"]], ["beta"])
+        self.assertEqual(by_key_status, "200 OK")
+        self.assertEqual([item["key"] for item in by_key["items"]], ["alpha"])
+        self.assertEqual(first_status, "200 OK")
+        self.assertEqual([item["key"] for item in first["items"]], ["alpha"])
+        self.assertIsNotNone(first["next_cursor"])
+        self.assertEqual(second_status, "200 OK")
+        self.assertEqual([item["key"] for item in second["items"]], ["gamma"])
+        self.assertIsNone(second["next_cursor"])
+
+    def test_search_treats_like_wildcards_as_literal(self) -> None:
+        """% and _ in search match those characters, not every row."""
+        self.call("POST", "/v1/projects", {"key": "percent", "name": "100%"})
+        self.call("POST", "/v1/projects", {"key": "plain", "name": "100x"})
+        self.call("POST", "/v1/projects", {"key": "bang", "name": "a!b"})
+        percent_status, percent = self.call(
+            "GET",
+            "/v1/projects",
+            query=urlencode({"search": "%"}),
+        )
+        underscore_status, underscore = self.call(
+            "GET",
+            "/v1/projects",
+            query=urlencode({"search": "_"}),
+        )
+        bang_status, bang = self.call(
+            "GET",
+            "/v1/projects",
+            query=urlencode({"search": "a!b"}),
+        )
+        too_long_status, too_long = self.call(
+            "GET",
+            "/v1/projects",
+            query=urlencode({"search": "a" * 257}),
+        )
+        self.assertEqual(percent_status, "200 OK")
+        self.assertEqual([item["key"] for item in percent["items"]], ["percent"])
+        self.assertEqual(underscore_status, "200 OK")
+        self.assertEqual(underscore["items"], [])
+        self.assertEqual(bang_status, "200 OK")
+        self.assertEqual([item["key"] for item in bang["items"]], ["bang"])
+        self.assertEqual(too_long_status, "400 Bad Request")
+        self.assertEqual(too_long["error"]["details"][0]["field"], "search")
+
     def test_limit_outside_the_cap_is_rejected(self) -> None:
         """A limit of 201 is 400. The service does not silently shorten the page."""
         status, body = self.call("GET", "/v1/projects", query="limit=201")
