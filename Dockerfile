@@ -7,18 +7,20 @@
 # Migrations are found by walking up from the installed source, so the
 # install stays editable and /app/db/migrations remains on that walk.
 
-FROM python:3.12-slim-bookworm
+# python:3.12-slim-bookworm
+FROM python:3.12-slim-bookworm@sha256:935c3c5b12357a7e10caa9c1e6ca5692344d97cf229832ef584be2cec9fc03df
 
 RUN useradd --create-home --uid 1000 --user-group flaggator
 
 WORKDIR /app
 
-COPY pyproject.toml README.md LICENSE ./
+COPY requirements.txt pyproject.toml README.md LICENSE ./
 COPY src ./src
 COPY db ./db
 COPY ui ./ui
 
-RUN pip install --no-cache-dir -e .
+RUN pip install --no-cache-dir --require-hashes -r requirements.txt \
+ && pip install --no-cache-dir --no-deps --no-build-isolation -e .
 
 RUN mkdir -p /data && chown flaggator:flaggator /data
 
