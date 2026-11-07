@@ -1,0 +1,114 @@
+/* Shared console tokens, copied from the flaggator.dev site. */
+
+:root {
+  --bg: #ffffff;
+  --ink: #1a3d2e;
+  --muted: #5a7366;
+  --line: #d5e0d9;
+  --card: #f3f7f4;
+  --red: #e85a3c;
+  --green-mid: #2d6b4f;
+  --sans: "Poppins", system-ui, sans-serif;
+  --mono: "IBM Plex Mono", ui-monospace, Menlo, Consolas, monospace;
+}
+
+* { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--ink);
+  font-family: var(--sans);
+  font-size: 1.05rem;
+  line-height: 1.55;
+}
+
+:focus-visible {
+  outline: 2px solid var(--red);
+  outline-offset: 3px;
+}
+
+/* The sign-in page is the one screen without the shared header and footer. */
+
+.login-page {
+  min-height: 100vh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 2rem 1.25rem;
+}
+
+.login {
+  width: min(22rem, 100%);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+}
+
+.login-logo {
+  width: min(16rem, 78vw);
+  height: auto;
+  display: block;
+}
+
+.login-brand {
+  margin: 0.35rem 0 0;
+  font-weight: 800;
+  font-size: 1.85rem;
+  letter-spacing: -0.04em;
+  line-height: 1;
+}
+
+.login-brand span { color: var(--red); }
+
+.login-card {
+  width: 100%;
+  margin-top: 1.6rem;
+  padding: 1.15rem 1.15rem 1.25rem;
+  background: var(--card);
+  border: 1px solid var(--line);
+  border-radius: 0.75rem;
+}
+
+.login-card label {
+  display: block;
+  margin-top: 0.85rem;
+  font-family: var(--mono);
+  font-size: 0.72rem;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+.login-card label:first-of-type { margin-top: 0; }
+
+.login-card input {
+  display: block;
+  width: 100%;
+  margin-top: 0.35rem;
+  padding: 0.65rem 0.75rem;
+  border: 1px solid var(--line);
+  border-radius: 0.55rem;
+  background: var(--bg);
+  color: var(--ink);
+  font-family: var(--sans);
+  font-size: 1rem;
+}
+
+.login-card button {
+  display: block;
+  width: 100%;
+  margin-top: 1.15rem;
+  padding: 0.72rem 1.1rem;
+  border: 0;
+  border-radius: 0.55rem;
+  background: var(--ink);
+  color: #fff;
+  font-family: var(--sans);
+  font-weight: 700;
+  font-size: 0.92rem;
+  cursor: pointer;
+}
+
+.login-card button:hover { background: var(--red); }

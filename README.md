@@ -8,7 +8,7 @@ The domain will feel familiar to anyone who has used a hosted feature-flag produ
 
 ## Design principles
 
-1. **API first.** Behavior is defined as a versioned HTTP API. A user interface, if one is ever added, is a client of that API.
+1. **API first.** Behavior is defined as a versioned HTTP API. A user interface, if one is ever added, is a client of that API. The rules for that optional console are in [Frontend](docs/frontend.md).
 2. **Thin controllers.** A handler parses a request, calls one domain service, and writes the response. Business rules live in domain services.
 3. **Explicit SQL.** Repository functions send SQL text and bind values through the DB-API. Rows are mapped into dataclass DTOs. The project does not use an ORM.
 4. **Standard library first.** HTTP, JSON, hashing, and the default database driver (SQLite) come from the Python standard library. JWT uses **PyJWT** (with the `crypto` extra for IdP JWKS). MySQL is an optional extra. Any other third-party package needs a written reason ([Security](docs/security.md)).
@@ -43,6 +43,7 @@ Dependency direction is one way: `api` → `domain services` → `repositories`.
 | [Security audit](docs/security_audit.md) | Point-in-time findings and the fix order |
 | [Code style](docs/style.md) | How functions are named, commented, and kept explicit |
 | [Example](docs/example.md) | A checkout rollout, from the management token to an SDK call |
+| [Frontend](docs/frontend.md) | Optional operator console: when it is served, how it is built, how the session is kept |
 
 ## Run
 
