@@ -38,7 +38,7 @@ def read_json_object(request: Request) -> dict:
         ) from exc
     try:
         parsed = json.loads(text)
-    except json.JSONDecodeError as exc:
+    except (json.JSONDecodeError, ValueError, OverflowError, RecursionError) as exc:
         raise ValidationError(
             "The request body is not JSON.",
             details=[{"field": "body", "message": "The body must be a JSON object."}],

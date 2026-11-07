@@ -65,6 +65,37 @@ class BodyLimitTests(unittest.TestCase):
             )
 
 
+class JsonLimitTests(unittest.TestCase):
+    def test_a_deeply_nested_body_is_400(self) -> None:
+        """RecursionError from the JSON parser is a validation error, not a 500."""
+        from api.body import read_json_object
+        from api.request import Request
+
+        nested = b"[" * 4000 + b"1" + b"]" * 4000
+        with self.assertRaises(ValidationError) as caught:
+            read_json_object(
+                Request(
+                    method="POST",
+                    path="/v1/projects",
+                    query={},
+                    headers={"content-type": "application/json"},
+                    body=nested,
+                )
+            )
+        self.assertEqual(caught.exception.details[0]["field"], "body")
+
+    def test_a_deeply_nested_variation_is_400(self) -> None:
+        """A variation deeper than the recursion limit is rejected."""
+        from domain.validation import variation_text
+
+        value: object = []
+        for _step in range(4000):
+            value = [value]
+        with self.assertRaises(ValidationError) as caught:
+            variation_text(value, 0)
+        self.assertEqual(caught.exception.details[0]["field"], "variations")
+
+
 class ServerSlotTests(unittest.TestCase):
     def test_a_full_server_answers_503(self) -> None:
         """When every work slot is taken, the response is 503.

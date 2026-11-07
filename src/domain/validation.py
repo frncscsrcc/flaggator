@@ -164,7 +164,18 @@ def variation_text(value: object, index: int) -> str:
     ValidationError for null, a non-finite number, or a value over 16 KiB.
     Does not read the database.
     """
-    _reject_nulls(value, index)
+    try:
+        _reject_nulls(value, index)
+    except RecursionError as exc:
+        raise ValidationError(
+            "The variations are not valid.",
+            details=[
+                {
+                    "field": "variations",
+                    "message": f"Variation {index} must be a JSON value.",
+                }
+            ],
+        ) from exc
     if isinstance(value, float) and not math.isfinite(value):
         raise ValidationError(
             "The variations are not valid.",
@@ -187,7 +198,7 @@ def variation_text(value: object, index: int) -> str:
         )
     try:
         encoded = json.dumps(value, ensure_ascii=False, separators=(",", ":"), sort_keys=True)
-    except (TypeError, ValueError) as exc:
+    except (TypeError, ValueError, RecursionError) as exc:
         raise ValidationError(
             "The variations are not valid.",
             details=[
