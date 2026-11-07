@@ -55,6 +55,11 @@ class HealthTests(unittest.TestCase):
         self.assertEqual(body, {"status": "ok"})
         header_map = dict(headers)
         self.assertEqual(header_map["Content-Type"], "application/json; charset=utf-8")
+        self.assertEqual(header_map["X-Content-Type-Options"], "nosniff")
+        self.assertEqual(header_map["Referrer-Policy"], "no-referrer")
+        self.assertEqual(header_map["X-Frame-Options"], "DENY")
+        self.assertIn("default-src 'self'", header_map["Content-Security-Policy"])
+        self.assertEqual(header_map["Cache-Control"], "no-store")
 
     def test_health_rejects_post(self) -> None:
         """POST /health is 405. The route exists and accepts GET."""

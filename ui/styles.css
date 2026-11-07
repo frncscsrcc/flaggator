@@ -8,8 +8,8 @@
   --card: #f3f7f4;
   --red: #e85a3c;
   --green-mid: #2d6b4f;
-  --sans: "Poppins", system-ui, sans-serif;
-  --mono: "IBM Plex Mono", ui-monospace, Menlo, Consolas, monospace;
+  --sans: system-ui, sans-serif;
+  --mono: ui-monospace, Menlo, Consolas, monospace;
 }
 
 * { box-sizing: border-box; }

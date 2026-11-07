@@ -28,6 +28,18 @@ from repositories.db import Database
 from repositories.eval_cache import EvaluationCache
 
 _MAX_IN_FLIGHT = 32
+_SECURITY_HEADERS = (
+    ("X-Content-Type-Options", "nosniff"),
+    ("Referrer-Policy", "no-referrer"),
+    ("X-Frame-Options", "DENY"),
+    (
+        "Content-Security-Policy",
+        "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self'; "
+        "font-src 'self'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'; "
+        "form-action 'self'",
+    ),
+    ("Cache-Control", "no-store"),
+)
 _MAX_READERS = 128
 _MAX_READERS_PER_ADDRESS = 16
 _REQUEST_DEADLINE_SECONDS = 30
@@ -424,6 +436,7 @@ def encode(start_response: StartResponse, response: Response) -> list[bytes]:
         [
             ("Content-Type", content_type),
             ("Content-Length", str(len(payload))),
+            *_SECURITY_HEADERS,
         ],
     )
     return [payload]
@@ -664,11 +677,13 @@ def _write_unavailable(request) -> None:
             }
         }
     ).encode("utf-8")
+    extra = "".join(f"{name}: {value}\r\n" for name, value in _SECURITY_HEADERS)
     head = (
         b"HTTP/1.1 503 Service Unavailable\r\n"
         b"Content-Type: application/json; charset=utf-8\r\n"
         b"Content-Length: " + str(len(payload)).encode("ascii") + b"\r\n"
-        b"Connection: close\r\n\r\n"
+        + extra.encode("ascii")
+        + b"Connection: close\r\n\r\n"
     )
     try:
         request.sendall(head + payload)
