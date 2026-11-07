@@ -313,7 +313,7 @@ class PublicFlagTests(unittest.TestCase):
             {
                 "email": "writer@example.com",
                 "name": "Writer",
-                "password": "password1",
+                "password": "password-ok-1",
                 "roles": ["reader", "writer"],
             },
         )
@@ -321,7 +321,7 @@ class PublicFlagTests(unittest.TestCase):
         login_status, logged_in = self.call(
             "POST",
             "/v1/auth/login",
-            {"email": "writer@example.com", "password": "password1"},
+            {"email": "writer@example.com", "password": "password-ok-1"},
             authorization=None,
         )
         self.assertEqual(login_status, "200 OK")

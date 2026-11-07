@@ -100,11 +100,11 @@ export TOKEN=the-printed-management-token
 curl -s -X POST http://127.0.0.1:8080/v1/users \
   -H "Authorization: Bearer $TOKEN" \
   -H "Content-Type: application/json" \
-  -d '{"email":"ops@example.com","name":"Ops","password":"password1","roles":["reader","writer","protected_writer","admin"]}'
+  -d '{"email":"ops@example.com","name":"Ops","password":"password-ok-1","roles":["reader","writer","protected_writer","admin"]}'
 
 curl -s -X POST http://127.0.0.1:8080/v1/auth/login \
   -H "Content-Type: application/json" \
-  -d '{"email":"ops@example.com","password":"password1"}'
+  -d '{"email":"ops@example.com","password":"password-ok-1"}'
 ```
 
 Put the login `access_token` in `TOKEN` for management calls (projects, flags, audit, users). The roles above include `admin`, which is what create and patch of users require. Login needs `FLAGGATOR_JWT_SECRET` (at least 32 bytes). Optional IdP: set `FLAGGATOR_JWT_JWKS_URL`, `FLAGGATOR_JWT_ISSUER`, and `FLAGGATOR_JWT_AUDIENCE`, pre-create the user with the IdP email (password may be omitted), then send the IdP Bearer token. Detail in [Security](docs/security.md).

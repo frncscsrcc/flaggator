@@ -101,7 +101,7 @@ class AuthzTests(unittest.TestCase):
             {
                 "email": f"{'-'.join(roles)}@example.com",
                 "name": "Operator",
-                "password": "password1",
+                "password": "password-ok-1",
                 "roles": roles,
             },
             token=self.management,

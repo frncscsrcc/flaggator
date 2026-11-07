@@ -58,14 +58,14 @@ class UsersTests(unittest.TestCase):
             {
                 "email": "Ops@Example.com",
                 "name": "Ops",
-                "password": "password1",
+                "password": "password-ok-1",
                 "roles": ["reader", "writer"],
             },
         )
         login_status, logged_in = self.call(
             "POST",
             "/v1/auth/login",
-            {"email": "ops@example.com", "password": "password1"},
+            {"email": "ops@example.com", "password": "password-ok-1"},
             authorization=None,
         )
         list_status, listed = self.call("GET", "/v1/users")
@@ -93,7 +93,7 @@ class UsersTests(unittest.TestCase):
             {
                 "email": "ops@example.com",
                 "name": "Ops",
-                "password": "password1",
+                "password": "password-ok-1",
                 "roles": ["reader"],
             },
         )
@@ -101,13 +101,13 @@ class UsersTests(unittest.TestCase):
         wrong_status, wrong = self.call(
             "POST",
             "/v1/auth/login",
-            {"email": "ops@example.com", "password": "password2"},
+            {"email": "ops@example.com", "password": "password-ok-2"},
             authorization=None,
         )
         missing_status, missing = self.call(
             "POST",
             "/v1/auth/login",
-            {"email": "missing@example.com", "password": "password1"},
+            {"email": "missing@example.com", "password": "password-ok-1"},
             authorization=None,
         )
         self.call(
@@ -118,7 +118,7 @@ class UsersTests(unittest.TestCase):
         disabled_status, disabled = self.call(
             "POST",
             "/v1/auth/login",
-            {"email": "ops@example.com", "password": "password1"},
+            {"email": "ops@example.com", "password": "password-ok-1"},
             authorization=None,
         )
         self.assertEqual(wrong_status, "401 Unauthorized")
@@ -136,7 +136,7 @@ class UsersTests(unittest.TestCase):
             {
                 "email": "ops@example.com",
                 "name": "Ops",
-                "password": "password1",
+                "password": "password-ok-1",
                 "roles": ["reader"],
             },
         )
@@ -151,7 +151,7 @@ class UsersTests(unittest.TestCase):
             {
                 "email": "ops@example.com",
                 "name": "Other",
-                "password": "password1",
+                "password": "password-ok-1",
                 "roles": ["reader"],
             },
         )
@@ -170,7 +170,7 @@ class UsersTests(unittest.TestCase):
             {
                 "email": "ada@alpha.example",
                 "name": "Ada Lovelace",
-                "password": "password1",
+                "password": "password-ok-1",
                 "roles": ["reader"],
             },
         )
@@ -180,7 +180,7 @@ class UsersTests(unittest.TestCase):
             {
                 "email": "adam@beta.example",
                 "name": "Adam",
-                "password": "password1",
+                "password": "password-ok-1",
                 "roles": ["reader"],
             },
         )
@@ -190,7 +190,7 @@ class UsersTests(unittest.TestCase):
             {
                 "email": "zed@gamma.example",
                 "name": "Zed",
-                "password": "password1",
+                "password": "password-ok-1",
                 "roles": ["reader"],
             },
         )
@@ -236,7 +236,7 @@ class UsersTests(unittest.TestCase):
             {
                 "email": "pct@example.com",
                 "name": "100%",
-                "password": "password1",
+                "password": "password-ok-1",
                 "roles": ["reader"],
             },
         )
@@ -246,7 +246,7 @@ class UsersTests(unittest.TestCase):
             {
                 "email": "plain@example.com",
                 "name": "100x",
-                "password": "password1",
+                "password": "password-ok-1",
                 "roles": ["reader"],
             },
         )
@@ -256,7 +256,7 @@ class UsersTests(unittest.TestCase):
             {
                 "email": "bang@example.com",
                 "name": "a!b",
-                "password": "password1",
+                "password": "password-ok-1",
                 "roles": ["reader"],
             },
         )

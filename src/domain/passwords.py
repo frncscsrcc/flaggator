@@ -15,7 +15,11 @@ _R = 8
 _P = 1
 _DKLEN = 32
 _SALT_BYTES = 16
+# A password already stored may be this short. Login still checks it.
 _MIN_PASSWORD_LENGTH = 8
+# A password being set now. Raising the login minimum would lock out
+# hashes that were stored under the old rule.
+_MIN_NEW_PASSWORD_LENGTH = 12
 _MAX_PASSWORD_LENGTH = 1024
 
 
@@ -35,13 +39,13 @@ def require_password(password: str, field: str = "password") -> str:
                 }
             ],
         )
-    if len(password) < _MIN_PASSWORD_LENGTH:
+    if len(password) < _MIN_NEW_PASSWORD_LENGTH:
         raise ValidationError(
             "The password is not valid.",
             details=[
                 {
                     "field": field,
-                    "message": f"Password must be at least {_MIN_PASSWORD_LENGTH} characters.",
+                    "message": f"Password must be at least {_MIN_NEW_PASSWORD_LENGTH} characters.",
                 }
             ],
         )

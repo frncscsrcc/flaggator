@@ -52,8 +52,8 @@ Opaque management tokens are created by `python -m main bootstrap`. It prints th
 ### Users and passwords
 
 - A user has email (unique), display name, optional password hash, roles, and optional `disabled_at`.
-- Password hashes use a slow KDF (stdlib `hashlib.scrypt` preferred). They are never returned by the API or written to audit `before`/`after` documents.
-- Local login is `POST /v1/auth/login` with email and password; the response is an access JWT only.
+- Password hashes use a slow KDF (stdlib `hashlib.scrypt` preferred). They are never returned by the API or written to audit `before`/`after` documents. A password being set must be 12 to 1024 characters. A password already stored may be as short as 8, and login still accepts that length.
+- Local login is `POST /v1/auth/login` with email and password; the response is an access JWT only. Ten failed attempts for one email in 60 seconds answer 429 and do not run scrypt. Anyone who knows the email can hold that bucket full; the opaque management token is the recovery path. A successful login does not count.
 
 ### JWT ([P13](decisions.md))
 
@@ -137,7 +137,9 @@ A flag is private unless `public` is true. `POST /v1/client-evaluate` takes an e
 
 `client_id` is a random value from `secrets.token_urlsafe`, stored in clear text, and shown on environment reads. It is not a hash of the project name. Rotating it makes the previous value 404. A browser cannot keep a secret, so anyone who has the id can probe public flags with chosen contexts. That is the accepted exposure of a public flag. Private flags and evaluation-config stay behind a bearer token.
 
-The route is limited per client address, separately from login: `FLAGGATOR_CLIENT_EVAL_LIMIT` (default 60) requests in `FLAGGATOR_CLIENT_EVAL_WINDOW_SECONDS` (default 60). An empty address shares the bucket `unknown`. Over the limit is 429 `rate_limited`. The map lives in one process. An unknown `client_id` is the same 404 whether or not the id once existed.
+The route is limited per client address, separately from login: `FLAGGATOR_CLIENT_EVAL_LIMIT` (default 60) requests in `FLAGGATOR_CLIENT_EVAL_WINDOW_SECONDS` (default 60). Login is 10 attempts per address in 60 seconds. An empty address shares the bucket `unknown`. Over the limit is 429 `rate_limited`. The map lives in one process and keeps at most 4096 keys, dropping the quietest first. An unknown `client_id` is the same 404 whether or not the id once existed.
+
+`FLAGGATOR_TRUSTED_PROXIES` is a comma-separated list of IP addresses and CIDR networks, empty by default. When the connecting peer is on that list, the client address is the nearest untrusted hop in `X-Forwarded-For`. A missing header, a hop that is not an IP, or a chain of only trusted hops uses the bucket `unknown`. A peer that is not on the list is counted itself, and its `X-Forwarded-For` is ignored. An IPv6 client counts as its /64. The same list exempts that peer from the per-address cap on half-open connections.
 
 ## Optimistic concurrency
 

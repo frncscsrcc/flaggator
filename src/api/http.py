@@ -20,7 +20,7 @@ from api.console import console_response, default_console_directory
 from api.login_limit import LoginLimiter
 from api.request import Request, Response
 from api.routes import authorize, dispatch, requires_credential
-from domain.errors import DomainError, StorageError, TooManyRequests, ValidationError
+from domain.errors import DomainError, StorageError, TooManyRequests, Unauthenticated, ValidationError
 from domain.services.authentication import JwtSettings, authenticate
 from cache.null import NullCache
 from domain.validation import DEFAULT_EVAL_TTL_SECONDS, MAX_REQUEST_BODY_BYTES
@@ -193,6 +193,7 @@ class Application:
         client_eval_window_seconds: float = 60,
         console_directory: Path | None = None,
         headless: bool = False,
+        trusted_proxies: tuple[ipaddress.IPv4Network | ipaddress.IPv6Network, ...] = (),
     ) -> None:
         """Keep database, the evaluation cache, and JWT verify settings.
 
@@ -216,7 +217,8 @@ class Application:
             window_seconds=client_eval_window_seconds,
         )
         self._in_flight = threading.BoundedSemaphore(_MAX_IN_FLIGHT)
-        self.trusted_proxies: tuple[ipaddress.IPv4Network | ipaddress.IPv6Network, ...] = ()
+        self._login_account_limiter = LoginLimiter()
+        self.trusted_proxies = tuple(trusted_proxies)
         self._headless = headless
         if headless:
             self._console_directory = None
@@ -233,7 +235,7 @@ class Application:
         does not reach the client.
         """
         try:
-            request = request_from_environ(environ)
+            request = request_from_environ(environ, self.trusted_proxies)
         except DomainError as error:
             return encode(start_response, response_for_domain_error(error))
         except Exception:
@@ -288,11 +290,18 @@ class Application:
             return method_not_allowed("POST")
         if not self._login_limiter.allow(request.client_address):
             raise TooManyRequests()
+        email = _normalized_login_email(request)
+        if email is not None and self._login_account_limiter.over_limit(email):
+            raise TooManyRequests()
         if self._database is None:
             raise StorageError()
         connection = self._database.connect()
         try:
             return login(connection, request, self._jwt_settings)
+        except Unauthenticated:
+            if email is not None:
+                self._login_account_limiter.record(email)
+            raise
         finally:
             connection.close()
 
@@ -339,12 +348,17 @@ class Application:
             connection.close()
 
 
-def request_from_environ(environ: dict) -> Request:
+def request_from_environ(
+    environ: dict,
+    trusted_proxies: tuple[ipaddress.IPv4Network | ipaddress.IPv6Network, ...] = (),
+) -> Request:
     """Copy the WSGI environ into a Request.
 
     Body is the raw bytes, limited to Content-Length. An unreadable length
-    raises ValidationError. Does not parse JSON and does not query the
-    database.
+    raises ValidationError. client_address is the address the rate limits
+    count: the peer, unless that peer is a trusted proxy, in which case it
+    is taken from X-Forwarded-For. An IPv6 address is folded to its /64.
+    Does not parse JSON and does not query the database.
     """
     method = str(environ.get("REQUEST_METHOD", ""))
     path = str(environ.get("PATH_INFO", ""))
@@ -363,7 +377,7 @@ def request_from_environ(environ: dict) -> Request:
             details=[{"field": "body", "message": "The body must be at most 256 KiB."}],
         )
     body = environ["wsgi.input"].read(length)
-    client_address = str(environ.get("REMOTE_ADDR", "") or "")
+    client_address = _client_address(environ, headers, trusted_proxies)
     return Request(
         method=method,
         path=path,
@@ -463,6 +477,105 @@ def _trusted_networks(server: ThreadingWSGIServer) -> tuple:
     application = getattr(server, "application", None)
     networks = getattr(application, "trusted_proxies", ())
     return tuple(networks)
+
+
+def _client_address(
+    environ: dict,
+    headers: dict[str, str],
+    trusted_proxies: tuple,
+) -> str:
+    """Return the address a rate limit counts for this request.
+
+    A peer that is not a trusted proxy is counted itself, so a client
+    cannot choose the bucket by sending X-Forwarded-For. A trusted peer
+    contributes the nearest untrusted hop in that header. A missing header,
+    a hop that is not an IP, or a chain of only trusted hops is the bucket
+    unknown. An IPv6 address counts as its /64. Does not read the database.
+    """
+    remote = str(environ.get("REMOTE_ADDR", "") or "")
+    if not _peer_is_trusted(remote, trusted_proxies):
+        return _limit_key(remote)
+    return _forwarded_client(headers.get("x-forwarded-for", ""), trusted_proxies)
+
+
+def _forwarded_client(header: str, trusted_proxies: tuple) -> str:
+    """Return the client hop in an X-Forwarded-For list.
+
+    Hops are separated by commas. Walking from the right skips trusted
+    proxies. The first untrusted IP is the client. Anything else is unknown.
+    Does not read the database.
+    """
+    if header.strip() == "":
+        return "unknown"
+    parts = [part.strip() for part in header.split(",")]
+    index = len(parts) - 1
+    while index >= 0:
+        hop = parts[index]
+        if hop == "":
+            index = index - 1
+            continue
+        try:
+            address = ipaddress.ip_address(hop)
+        except ValueError:
+            return "unknown"
+        if not _address_is_trusted(address, trusted_proxies):
+            return _limit_key(str(address))
+        index = index - 1
+    return "unknown"
+
+
+def _limit_key(address: str) -> str:
+    """Return the rate-limit bucket for address.
+
+    Empty is unknown. An IPv4-mapped IPv6 is counted as its IPv4 address.
+    Any other IPv6 is counted as the network address of its /64. An IPv4
+    is counted as itself. A value that is not an IP is kept, so a test
+    double still has a bucket. Does not read the database.
+    """
+    if address == "":
+        return "unknown"
+    try:
+        parsed = ipaddress.ip_address(address)
+    except ValueError:
+        return address
+    mapped = getattr(parsed, "ipv4_mapped", None)
+    if mapped is not None:
+        return str(mapped)
+    if isinstance(parsed, ipaddress.IPv6Address):
+        network = ipaddress.ip_network(str(parsed) + "/64", strict=False)
+        return str(network.network_address)
+    return str(parsed)
+
+
+def _normalized_login_email(request: Request) -> str | None:
+    """Return the login email, lowercased, or None when it is not usable.
+
+    A body that is not a JSON object, a missing email, and an email the
+    domain rejects are None, so they do not enter the per-email limit.
+    Does not read the database and does not check the password.
+    """
+    from api.body import read_json_object
+    from domain.services.users import require_email
+
+    try:
+        body = read_json_object(request)
+    except ValidationError:
+        return None
+    email = body.get("email")
+    if not isinstance(email, str):
+        return None
+    try:
+        return require_email(email)
+    except ValidationError:
+        return None
+
+
+def _address_is_trusted(address: ipaddress.IPv4Address | ipaddress.IPv6Address, networks: tuple) -> bool:
+    """Return True when address sits in one of networks. Does not read the database."""
+    for network in networks:
+        if address in network:
+            return True
+    return False
 
 
 def _peer_is_trusted(peer: str, networks: tuple) -> bool:

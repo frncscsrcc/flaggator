@@ -25,6 +25,7 @@ from api.http import (
     _REQUEST_DEADLINE_SECONDS,
     request_from_environ,
 )
+from api.login_limit import LoginLimiter
 from cache.memory import MemoryCache
 from composition import bootstrap_management_token, load_settings
 from domain.errors import ValidationError
@@ -189,6 +190,56 @@ class ServerSlotTests(unittest.TestCase):
         self.assertIn(b"503", data)
 
 
+class ClientAddressTests(unittest.TestCase):
+    def test_forwarded_for_is_used_only_from_a_trusted_peer(self) -> None:
+        """An untrusted peer is counted itself. A trusted peer yields the client hop.
+
+        A hop that is not an IP, and a missing header, share the bucket
+        unknown. Two IPv6 addresses in one /64 share a bucket.
+        """
+        trusted = (ipaddress.ip_network("10.0.0.1/32"),)
+        direct = request_from_environ(
+            _bare_environ("192.0.2.5", "203.0.113.8"),
+            trusted,
+        )
+        forwarded = request_from_environ(
+            _bare_environ("10.0.0.1", "203.0.113.8, 10.0.0.1"),
+            trusted,
+        )
+        garbage = request_from_environ(_bare_environ("10.0.0.1", "not-an-ip"), trusted)
+        missing = request_from_environ(_bare_environ("10.0.0.1", None), trusted)
+        first = request_from_environ(_bare_environ("2001:db8:1:2::10", None), ())
+        second = request_from_environ(_bare_environ("2001:db8:1:2::99", None), ())
+        self.assertEqual(direct.client_address, "192.0.2.5")
+        self.assertEqual(forwarded.client_address, "203.0.113.8")
+        self.assertEqual(garbage.client_address, "unknown")
+        self.assertEqual(missing.client_address, "unknown")
+        self.assertEqual(first.client_address, second.client_address)
+        self.assertEqual(first.client_address, "2001:db8:1:2::")
+
+    def test_a_full_map_keeps_the_new_key(self) -> None:
+        """Past the cap the quietest key is dropped and the new key stays."""
+        clock = {"now": 0.0}
+
+        def tick() -> float:
+            """Return the test clock. Does not read the database."""
+            return clock["now"]
+
+        limiter = LoginLimiter(limit=10, window_seconds=60, clock=tick)
+        with patch("api.login_limit._MAX_KEYS", 2):
+            clock["now"] = 1
+            self.assertTrue(limiter.allow("oldest"))
+            clock["now"] = 2
+            self.assertTrue(limiter.allow("middle"))
+            clock["now"] = 3
+            self.assertTrue(limiter.allow("newest"))
+        self.assertNotIn("oldest", limiter._hits)
+        self.assertIn("newest", limiter._hits)
+        clock["now"] = 120
+        self.assertFalse(limiter.over_limit("middle"))
+        self.assertNotIn("middle", limiter._hits)
+
+
 class JwksTimeoutTests(unittest.TestCase):
     def test_jwks_client_uses_a_five_second_timeout(self) -> None:
         """IdP key fetch cannot block a worker for the library default."""
@@ -265,7 +316,7 @@ class LoginAndTokenTests(unittest.TestCase):
         limited_status, limited = self.call(
             "POST",
             "/v1/auth/login",
-            {"email": "ops@example.com", "password": "password1"},
+            {"email": "ops@example.com", "password": "password-ok-1"},
             authorization=None,
             remote="10.0.0.8",
         )
@@ -273,6 +324,74 @@ class LoginAndTokenTests(unittest.TestCase):
         self.assertEqual(first["error"]["code"], "unauthenticated")
         self.assertEqual(limited_status, "429 Too Many Requests")
         self.assertEqual(limited["error"]["code"], "rate_limited")
+
+    def test_failed_logins_are_limited_per_email(self) -> None:
+        """Ten failures for one email close that login from every address.
+
+        A success is not a failure. An email the domain rejects does not
+        enter the map. A different email still answers 401.
+        """
+        self.call(
+            "POST",
+            "/v1/users",
+            {
+                "email": "ops@example.com",
+                "name": "Ops",
+                "password": "password-ok-1",
+                "roles": ["reader"],
+            },
+        )
+        for index in range(9):
+            status, _body = self.call(
+                "POST",
+                "/v1/auth/login",
+                {"email": "ops@example.com", "password": "password-ok-1"},
+                authorization=None,
+                remote="192.0.2." + str(index + 1),
+            )
+            self.assertEqual(status, "200 OK")
+        for index in range(10):
+            status, _body = self.call(
+                "POST",
+                "/v1/auth/login",
+                {"email": "ops@example.com", "password": "wrong-password"},
+                authorization=None,
+                remote="198.51.100." + str(index + 1),
+            )
+            self.assertEqual(status, "401 Unauthorized")
+        blocked_status, blocked = self.call(
+            "POST",
+            "/v1/auth/login",
+            {"email": "OPS@example.com", "password": "password-ok-1"},
+            authorization=None,
+            remote="203.0.113.9",
+        )
+        other_status, other = self.call(
+            "POST",
+            "/v1/auth/login",
+            {"email": "other@example.com", "password": "wrong-password"},
+            authorization=None,
+            remote="203.0.113.9",
+        )
+        for _index in range(10):
+            self.call(
+                "POST",
+                "/v1/auth/login",
+                {"email": "not-an-email", "password": "wrong-password"},
+                authorization=None,
+                remote="203.0.113.10",
+            )
+        still_status, _still = self.call(
+            "POST",
+            "/v1/auth/login",
+            {"email": "other@example.com", "password": "wrong-password"},
+            authorization=None,
+            remote="203.0.113.11",
+        )
+        self.assertEqual(blocked_status, "429 Too Many Requests")
+        self.assertEqual(blocked["error"]["code"], "rate_limited")
+        self.assertEqual(other_status, "401 Unauthorized")
+        self.assertEqual(still_status, "401 Unauthorized")
 
     def test_only_admin_manages_users(self) -> None:
         """Writer cannot create users. Admin can grant every role and write flags."""
@@ -282,7 +401,7 @@ class LoginAndTokenTests(unittest.TestCase):
             {
                 "email": "writer@example.com",
                 "name": "Writer",
-                "password": "password1",
+                "password": "password-ok-1",
                 "roles": ["reader", "writer"],
             },
         )
@@ -293,7 +412,7 @@ class LoginAndTokenTests(unittest.TestCase):
             {
                 "email": "other@example.com",
                 "name": "Other",
-                "password": "password1",
+                "password": "password-ok-1",
                 "roles": ["reader"],
             },
             authorization="Bearer " + writer,
@@ -304,7 +423,7 @@ class LoginAndTokenTests(unittest.TestCase):
             {
                 "email": "admin@example.com",
                 "name": "Admin",
-                "password": "password1",
+                "password": "password-ok-1",
                 "roles": ["admin"],
             },
         )
@@ -315,7 +434,7 @@ class LoginAndTokenTests(unittest.TestCase):
             {
                 "email": "reader@example.com",
                 "name": "Reader",
-                "password": "password1",
+                "password": "password-ok-1",
                 "roles": ["reader", "writer"],
             },
             authorization="Bearer " + admin,
@@ -326,7 +445,7 @@ class LoginAndTokenTests(unittest.TestCase):
             {
                 "email": "prot@example.com",
                 "name": "Prot",
-                "password": "password1",
+                "password": "password-ok-1",
                 "roles": ["reader", "writer", "protected_writer"],
             },
             authorization="Bearer " + admin,
@@ -337,7 +456,7 @@ class LoginAndTokenTests(unittest.TestCase):
             {
                 "email": "boss@example.com",
                 "name": "Boss",
-                "password": "password1",
+                "password": "password-ok-1",
                 "roles": ["reader", "admin"],
             },
         )
@@ -348,7 +467,7 @@ class LoginAndTokenTests(unittest.TestCase):
             {
                 "email": "second@example.com",
                 "name": "Second",
-                "password": "password1",
+                "password": "password-ok-1",
                 "roles": ["reader", "admin"],
             },
             authorization="Bearer " + boss,
@@ -391,11 +510,11 @@ class LoginAndTokenTests(unittest.TestCase):
         self.assertIs(environment["protected"], True)
 
     def _login(self, email: str) -> str:
-        """Return a local access token for email. Password is password1."""
+        """Return a local access token for email. Password is password-ok-1."""
         _status, body = self.call(
             "POST",
             "/v1/auth/login",
-            {"email": email, "password": "password1"},
+            {"email": email, "password": "password-ok-1"},
             authorization=None,
         )
         return str(body["access_token"])
@@ -498,6 +617,24 @@ class LoginAndTokenTests(unittest.TestCase):
         if captured["status"] == "204 No Content":
             return str(captured["status"]), {}
         return str(captured["status"]), json.loads(payload.decode("utf-8"))
+
+
+def _bare_environ(remote: str, forwarded: str | None) -> dict:
+    """Return a GET environ with remote and an optional X-Forwarded-For.
+
+    Does not open a socket.
+    """
+    environ = {
+        "REQUEST_METHOD": "GET",
+        "PATH_INFO": "/health",
+        "QUERY_STRING": "",
+        "REMOTE_ADDR": remote,
+        "CONTENT_LENGTH": "0",
+        "wsgi.input": io.BytesIO(b""),
+    }
+    if forwarded is not None:
+        environ["HTTP_X_FORWARDED_FOR"] = forwarded
+    return environ
 
 
 def _partial_connection(host: str, port: int) -> socket.socket:

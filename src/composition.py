@@ -4,6 +4,7 @@ This module is the only place that chooses the database engine and the
 cache. Other modules receive the objects it builds.
 """
 
+import ipaddress
 import os
 import sys
 from collections.abc import Mapping
@@ -51,6 +52,7 @@ class Settings:
     jwt_jwks_url: str
     client_eval_limit: int
     client_eval_window_seconds: int
+    trusted_proxies: tuple[ipaddress.IPv4Network | ipaddress.IPv6Network, ...]
     headless: bool
     migrations_directory: Path
 
@@ -67,6 +69,7 @@ class Settings:
             f"jwt_ttl_seconds={self.jwt_ttl_seconds!r}, jwt_jwks_url={self.jwt_jwks_url!r}, "
             f"client_eval_limit={self.client_eval_limit!r}, "
             f"client_eval_window_seconds={self.client_eval_window_seconds!r}, "
+            f"trusted_proxies={self.trusted_proxies!r}, "
             f"headless={self.headless!r})"
         )
 
@@ -128,6 +131,7 @@ def load_settings(environment: Mapping[str, str] | None = None) -> Settings:
             source.get("FLAGGATOR_CLIENT_EVAL_WINDOW_SECONDS", "60"),
             "client_eval_window_seconds",
         ),
+        trusted_proxies=_trusted_proxies(source.get("FLAGGATOR_TRUSTED_PROXIES", "")),
         headless=_headless(source.get("FLAGGATOR_HEADLESS", "")),
         migrations_directory=default_migrations_directory(),
     )
@@ -201,6 +205,7 @@ def prepare(settings: Settings) -> Runtime:
             client_eval_window_seconds=settings.client_eval_window_seconds,
             console_directory=default_console_directory(),
             headless=settings.headless,
+            trusted_proxies=settings.trusted_proxies,
         ),
     )
 
@@ -275,6 +280,40 @@ def _jwt_secret(raw: str) -> str:
             ],
         )
     return raw
+
+
+def _trusted_proxies(raw: str) -> tuple[ipaddress.IPv4Network | ipaddress.IPv6Network, ...]:
+    """Parse a comma-separated list of proxy IPs and CIDR networks.
+
+    Empty is no trusted proxy, so X-Forwarded-For is ignored. A value that
+    is not an IP or a network raises ValidationError. A host with a prefix
+    is the network that contains it. Does not connect.
+    """
+    if raw.strip() == "":
+        return ()
+    networks: list[ipaddress.IPv4Network | ipaddress.IPv6Network] = []
+    for item in raw.split(","):
+        text = item.strip()
+        if text == "":
+            continue
+        try:
+            if "/" in text:
+                networks.append(ipaddress.ip_network(text, strict=False))
+            else:
+                address = ipaddress.ip_address(text)
+                prefix = address.max_prefixlen
+                networks.append(ipaddress.ip_network(str(address) + "/" + str(prefix), strict=False))
+        except ValueError as exc:
+            raise ValidationError(
+                "The trusted proxy list is not valid.",
+                details=[
+                    {
+                        "field": "trusted_proxies",
+                        "message": "FLAGGATOR_TRUSTED_PROXIES entries must be IP addresses or CIDR networks.",
+                    }
+                ],
+            ) from exc
+    return tuple(networks)
 
 
 def _positive_int(raw: str, field: str) -> int:

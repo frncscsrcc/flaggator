@@ -37,6 +37,7 @@ class SettingsTests(unittest.TestCase):
         self.assertEqual(settings.jwt_jwks_url, "")
         self.assertEqual(settings.client_eval_limit, 60)
         self.assertEqual(settings.client_eval_window_seconds, 60)
+        self.assertEqual(settings.trusted_proxies, ())
         self.assertFalse(settings.headless)
         self.assertNotIn("mysql_password", repr(settings))
         self.assertNotIn("jwt_secret", repr(settings))
@@ -67,6 +68,18 @@ class SettingsTests(unittest.TestCase):
         with self.assertRaises(ValidationError) as caught_window:
             load_settings({"FLAGGATOR_CLIENT_EVAL_WINDOW_SECONDS": "nope"})
         self.assertEqual(caught_window.exception.details[0]["field"], "client_eval_window_seconds")
+
+    def test_trusted_proxies_are_networks(self) -> None:
+        """A list of IPs and CIDR networks is parsed, and a bad entry fails startup."""
+        import ipaddress
+
+        settings = load_settings({"FLAGGATOR_TRUSTED_PROXIES": "10.0.0.1, 192.0.2.0/24"})
+        self.assertEqual(len(settings.trusted_proxies), 2)
+        self.assertIn(ipaddress.ip_address("10.0.0.1"), settings.trusted_proxies[0])
+        self.assertIn(ipaddress.ip_address("192.0.2.9"), settings.trusted_proxies[1])
+        with self.assertRaises(ValidationError) as caught:
+            load_settings({"FLAGGATOR_TRUSTED_PROXIES": "not-a-proxy"})
+        self.assertEqual(caught.exception.details[0]["field"], "trusted_proxies")
 
     def test_bad_port_is_a_validation_error(self) -> None:
         """A non-numeric bind port fails before a socket is opened."""
