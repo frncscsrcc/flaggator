@@ -1,7 +1,7 @@
 # Minimal image for one flaggator process.
 #
-# The process is its own HTTP server (stdlib WSGI, 32 in-flight requests,
-# 30 second socket timeout). gunicorn and uvicorn are not used: gunicorn
+# The process is its own HTTP server (stdlib WSGI, 32 in-flight requests
+# after the body is read, 30 second deadline from accept). gunicorn and uvicorn are not used: gunicorn
 # would replace that server, and uvicorn speaks ASGI.
 #
 # Migrations are found by walking up from the installed source, so the

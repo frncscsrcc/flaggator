@@ -4,7 +4,10 @@ Controllers are called with a Request and return a Response. This module
 turns those into HTTP. It does not contain a business rule.
 """
 
+import ipaddress
 import json
+import socket
+import sys
 import threading
 import traceback
 from collections.abc import Callable
@@ -25,7 +28,9 @@ from repositories.db import Database
 from repositories.eval_cache import EvaluationCache
 
 _MAX_IN_FLIGHT = 32
-_SOCKET_TIMEOUT_SECONDS = 30
+_MAX_READERS = 128
+_MAX_READERS_PER_ADDRESS = 16
+_REQUEST_DEADLINE_SECONDS = 30
 
 _DEFAULT_JWT = JwtSettings(
     secret="",
@@ -57,48 +62,116 @@ class ThreadingWSGIServer(ThreadingMixIn, WSGIServer):
     """A WSGI server that runs each request on its own thread.
 
     daemon_threads lets the process exit when the main thread does. At most
-    _MAX_IN_FLIGHT requests run at once. Each accepted socket has a read
-    timeout. The memory cache lock is what makes sharing the cache across
-    these threads safe.
+    _MAX_READERS connections are being read, and at most
+    _MAX_READERS_PER_ADDRESS of those belong to one peer, unless that peer
+    is a trusted proxy. The work itself is capped later, inside the
+    application, after the body has been read. Every accepted socket has
+    one deadline measured from accept: a slow trickle does not renew it.
+    The memory cache lock is what makes sharing the cache across these
+    threads safe.
     """
 
     daemon_threads = True
 
     def __init__(self, server_address, RequestHandlerClass, bind_and_activate=True):
-        """Bind the port and create the in-flight semaphore."""
+        """Bind the port and create the reader limits.
+
+        request_deadline_seconds is the budget from accept. Tests shorten it.
+        """
         super().__init__(server_address, RequestHandlerClass, bind_and_activate)
-        self._in_flight = threading.BoundedSemaphore(_MAX_IN_FLIGHT)
+        self.request_deadline_seconds = _REQUEST_DEADLINE_SECONDS
+        self._readers = threading.BoundedSemaphore(_MAX_READERS)
+        self._readers_lock = threading.Lock()
+        self._readers_by_address: dict[str, int] = {}
+        self._deadlines: dict[int, threading.Timer] = {}
 
     def get_request(self):
-        """Accept one socket and set its timeout.
+        """Accept one socket and start its deadline.
 
-        The listening socket itself keeps the default blocking accept.
+        When the deadline fires the socket is closed, so a slow trickle
+        cannot keep the reader. The listening socket itself keeps the
+        default blocking accept.
         """
         request, client_address = super().get_request()
-        request.settimeout(_SOCKET_TIMEOUT_SECONDS)
+        timer = threading.Timer(self.request_deadline_seconds, _close_quietly, args=(request,))
+        timer.daemon = True
+        timer.start()
+        with self._readers_lock:
+            self._deadlines[id(request)] = timer
         return request, client_address
 
     def process_request(self, request, client_address):
-        """Start a worker, or answer 503 when every slot is taken.
+        """Start a reader, or answer 503 when a reader limit is already full.
 
-        The slot is released in the worker thread. A failure to start the
-        thread releases it here.
+        The reader slot is released in the reader thread. A failure to start
+        the thread releases it here. This does not take a work slot.
         """
-        if not self._in_flight.acquire(blocking=False):
+        peer = _peer_host(client_address)
+        if not self._acquire_reader(peer):
+            self._cancel_deadline(request)
             _write_unavailable(request)
             return
         try:
             super().process_request(request, client_address)
         except Exception:
-            self._in_flight.release()
+            self._cancel_deadline(request)
+            self._release_reader(peer)
             raise
 
     def process_request_thread(self, request, client_address):
-        """Handle one request and then free its slot."""
+        """Read and handle one request, then free its reader slot."""
         try:
             super().process_request_thread(request, client_address)
         finally:
-            self._in_flight.release()
+            self._cancel_deadline(request)
+            self._release_reader(_peer_host(client_address))
+
+    def handle_error(self, request, client_address):
+        """Ignore a client that disconnected or ran out its deadline.
+
+        Those are OSError from a closed socket. Any other failure is
+        reported by the base server.
+        """
+        if isinstance(sys.exception(), OSError):
+            return
+        super().handle_error(request, client_address)
+
+    def _cancel_deadline(self, request) -> None:
+        """Stop the accept-time deadline for request, if it is still waiting."""
+        with self._readers_lock:
+            timer = self._deadlines.pop(id(request), None)
+        if timer is not None:
+            timer.cancel()
+
+    def _acquire_reader(self, peer: str) -> bool:
+        """Take a global reader slot and, unless peer is trusted, a per-address slot.
+
+        Returns False when either limit is full. A trusted proxy is exempt
+        from the per-address limit because every client shares its address.
+        Does not read the database.
+        """
+        if not self._readers.acquire(blocking=False):
+            return False
+        if _peer_is_trusted(peer, _trusted_networks(self)):
+            return True
+        with self._readers_lock:
+            count = self._readers_by_address.get(peer, 0)
+            if count >= _MAX_READERS_PER_ADDRESS:
+                self._readers.release()
+                return False
+            self._readers_by_address[peer] = count + 1
+        return True
+
+    def _release_reader(self, peer: str) -> None:
+        """Return the reader slots taken for peer. Does not read the database."""
+        if not _peer_is_trusted(peer, _trusted_networks(self)):
+            with self._readers_lock:
+                count = self._readers_by_address.get(peer, 0) - 1
+                if count <= 0:
+                    self._readers_by_address.pop(peer, None)
+                else:
+                    self._readers_by_address[peer] = count
+        self._readers.release()
 
 
 class Application:
@@ -142,6 +215,8 @@ class Application:
             limit=client_eval_limit,
             window_seconds=client_eval_window_seconds,
         )
+        self._in_flight = threading.BoundedSemaphore(_MAX_IN_FLIGHT)
+        self.trusted_proxies: tuple[ipaddress.IPv4Network | ipaddress.IPv6Network, ...] = ()
         self._headless = headless
         if headless:
             self._console_directory = None
@@ -159,28 +234,46 @@ class Application:
         """
         try:
             request = request_from_environ(environ)
-            static = console_response(
-                request.method,
-                request.path,
-                self._console_directory,
-                self._headless,
-            )
-            if static is not None:
-                response = static
-            elif request.path == "/v1/auth/login":
-                response = self._login(request)
-            elif request.path == "/v1/client-evaluate":
-                response = self._client_evaluate(request)
-            elif requires_credential(request):
-                response = self._authenticated(request)
-            else:
-                response = dispatch(request)
         except DomainError as error:
-            response = response_for_domain_error(error)
+            return encode(start_response, response_for_domain_error(error))
         except Exception:
             traceback.print_exc()
-            response = response_for_domain_error(StorageError())
-        return encode(start_response, response)
+            return encode(start_response, response_for_domain_error(StorageError()))
+        if not self._in_flight.acquire(blocking=False):
+            return encode(start_response, _unavailable_response())
+        try:
+            try:
+                response = self._response_for(request)
+            except DomainError as error:
+                response = response_for_domain_error(error)
+            except Exception:
+                traceback.print_exc()
+                response = response_for_domain_error(StorageError())
+            return encode(start_response, response)
+        finally:
+            self._in_flight.release()
+
+    def _response_for(self, request: Request) -> Response:
+        """Choose the handler for a request whose body is already read.
+
+        Does not take the work slot. The caller does that, after
+        request_from_environ has returned. Does not catch errors.
+        """
+        static = console_response(
+            request.method,
+            request.path,
+            self._console_directory,
+            self._headless,
+        )
+        if static is not None:
+            return static
+        if request.path == "/v1/auth/login":
+            return self._login(request)
+        if request.path == "/v1/client-evaluate":
+            return self._client_evaluate(request)
+        if requires_credential(request):
+            return self._authenticated(request)
+        return dispatch(request)
 
     def _login(self, request: Request) -> Response:
         """Handle local login without a bearer token.
@@ -333,11 +426,88 @@ def serve(application: Application, host: str, port: int) -> None:
     server.serve_forever()
 
 
+def _close_quietly(request: socket.socket) -> None:
+    """Shut the socket down so a blocked read ends.
+
+    Used when the accept-time deadline fires. A socket that is already
+    closed stays closed.
+    """
+    try:
+        request.shutdown(socket.SHUT_RDWR)
+    except OSError:
+        pass
+    try:
+        request.close()
+    except OSError:
+        pass
+
+
+def _peer_host(client_address: object) -> str:
+    """Return the host part of a socket address.
+
+    A missing or empty address is "". Does not read the database.
+    """
+    if isinstance(client_address, tuple) and len(client_address) > 0:
+        return str(client_address[0])
+    if client_address is None:
+        return ""
+    return str(client_address)
+
+
+def _trusted_networks(server: ThreadingWSGIServer) -> tuple:
+    """Return the trusted proxy networks stored on the server's application.
+
+    An application without the attribute contributes none. Does not read
+    the database.
+    """
+    application = getattr(server, "application", None)
+    networks = getattr(application, "trusted_proxies", ())
+    return tuple(networks)
+
+
+def _peer_is_trusted(peer: str, networks: tuple) -> bool:
+    """Return True when peer is inside one of networks.
+
+    A peer that is not an IP is not trusted. An empty list trusts nobody.
+    Does not read the database.
+    """
+    if peer == "" or len(networks) == 0:
+        return False
+    try:
+        address = ipaddress.ip_address(peer)
+    except ValueError:
+        return False
+    for network in networks:
+        if address in network:
+            return True
+    return False
+
+
+def _unavailable_response() -> Response:
+    """Return the 503 document used when the work slots are full.
+
+    Does not read the database.
+    """
+    return Response(
+        status=503,
+        body={
+            "error": {
+                "code": "unavailable",
+                "message": "The server is busy.",
+                "details": [],
+            }
+        },
+    )
+
+
 def _write_unavailable(request) -> None:
     """Send 503 on request and close it.
 
-    Used when the server has no free worker slot. Does not read a body.
+    Used when the server has no free reader slot. Pending bytes are
+    discarded first: closing with unread data makes the kernel answer RST
+    and the client never sees the 503.
     """
+    _drain(request)
     payload = json.dumps(
         {
             "error": {
@@ -359,6 +529,22 @@ def _write_unavailable(request) -> None:
         pass
     finally:
         request.close()
+
+
+def _drain(request) -> None:
+    """Read and discard whatever has already arrived on request.
+
+    Does not wait for more bytes. A socket that cannot be read is left as it is.
+    """
+    try:
+        request.setblocking(False)
+    except OSError:
+        return
+    try:
+        while request.recv(4096):
+            pass
+    except OSError:
+        pass
 
 
 def _first_query_values(query_string: str) -> dict[str, str]:

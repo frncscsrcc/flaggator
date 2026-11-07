@@ -6,7 +6,7 @@ flaggator stores decisions that change production behavior, and it stores creden
 
 - The service is one process on a machine the operator controls. The database is a SQLite file or a MySQL schema the operator points at.
 - The default bind is `127.0.0.1` and a non-privileged port. The process does not terminate TLS.
-- A deployment that is reachable beyond loopback is expected to sit behind a reverse proxy that terminates TLS. Plain HTTP off-loopback is outside the supported setup.
+- A deployment that is reachable beyond loopback is expected to sit behind a reverse proxy that terminates TLS and buffers the whole request before forwarding it. Plain HTTP off-loopback is outside the supported setup. The process caps half-open connections, and that cap is not a substitute for the proxy.
 - Whoever can read or write the database can read flag configuration, salts, audit history, credential hashes, and user password hashes, and can change flags outside the audit log.
 - One deployment is one tenant. Users and roles are global across projects. Separate organizations run separate processes.
 - People use JWT-backed users. The opaque management token is break-glass, not the UI identity.

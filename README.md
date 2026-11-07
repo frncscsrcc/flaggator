@@ -70,7 +70,7 @@ The same process serves the operator console. The sign-in page is `http://127.0.
 
 ### Docker
 
-`Dockerfile` builds one process on `python:3.12-slim-bookworm`. The image does not add gunicorn or uvicorn. `python -m main` is the HTTP server: the standard-library WSGI server, at most 32 requests in flight, and a 30 second timeout on each accepted socket.
+`Dockerfile` builds one process on `python:3.12-slim-bookworm`. The image does not add gunicorn or uvicorn. `python -m main` is the HTTP server: the standard-library WSGI server, at most 32 requests in flight once the body has been read, and a 30 second deadline measured from accept. A published port should sit behind a proxy that buffers the whole request.
 
 The image listens on `0.0.0.0:8080` so a published port reaches the process. The SQLite file is `/data/flaggator.db`. Use the same volume and the same `FLAGGATOR_JWT_SECRET` for bootstrap and for the long-running process: the management token is stored in the database, and the secret signs local login tokens. A bind-mounted data directory must be writable by uid 1000.
 

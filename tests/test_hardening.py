@@ -1,12 +1,14 @@
 """Controls from the 2026-10-31 security audit."""
 
 import io
+import ipaddress
 import json
 import os
 import socket
 import stat
 import tempfile
 import threading
+import time
 import unittest
 from pathlib import Path
 import sys
@@ -16,7 +18,13 @@ _SRC = Path(__file__).resolve().parents[1] / "src"
 if str(_SRC) not in sys.path:
     sys.path.insert(0, str(_SRC))
 
-from api.http import Application, ThreadingWSGIServer, request_from_environ
+from api.http import (
+    Application,
+    ThreadingWSGIServer,
+    _MAX_READERS_PER_ADDRESS,
+    _REQUEST_DEADLINE_SECONDS,
+    request_from_environ,
+)
 from cache.memory import MemoryCache
 from composition import bootstrap_management_token, load_settings
 from domain.errors import ValidationError
@@ -58,23 +66,127 @@ class BodyLimitTests(unittest.TestCase):
 
 class ServerSlotTests(unittest.TestCase):
     def test_a_full_server_answers_503(self) -> None:
-        """When every worker slot is taken, the socket gets 503 and is closed."""
+        """When every work slot is taken, the response is 503.
+
+        The slot is taken after the body has been read, so this calls the
+        application directly. A half-open connection does not use the slot.
+        """
+        application = Application(None)
+        application._in_flight = threading.BoundedSemaphore(0)
+        captured: dict[str, str] = {}
+
+        def start_response(status: str, headers: list[tuple[str, str]]) -> None:
+            """Record the status line. Does not send bytes."""
+            captured["status"] = status
+
+        body = b"".join(
+            application(
+                {
+                    "REQUEST_METHOD": "GET",
+                    "PATH_INFO": "/health",
+                    "QUERY_STRING": "",
+                    "SERVER_NAME": "127.0.0.1",
+                    "SERVER_PORT": "8080",
+                    "SERVER_PROTOCOL": "HTTP/1.1",
+                    "wsgi.version": (1, 0),
+                    "wsgi.url_scheme": "http",
+                    "wsgi.input": io.BytesIO(b""),
+                    "wsgi.errors": io.StringIO(),
+                    "wsgi.multithread": False,
+                    "wsgi.multiprocess": False,
+                    "wsgi.run_once": False,
+                    "CONTENT_LENGTH": "0",
+                },
+                start_response,
+            )
+        )
+        self.assertIn("503", captured["status"])
+        self.assertIn(b"unavailable", body)
+
+    def test_reader_limits_and_the_accept_deadline(self) -> None:
+        """Fifteen half-open connections leave /health at 200. The seventeenth is 503.
+
+        The production deadline is 30 seconds from accept. This server uses
+        a short one so the test can watch the sockets close. A trusted proxy
+        is exempt from the per-address cap, and a global cap of zero refuses
+        the next reader.
+        """
+        self.assertEqual(_REQUEST_DEADLINE_SECONDS, 30)
+        application = Application(None)
         server = make_server(
+            "127.0.0.1",
+            0,
+            application,
+            server_class=ThreadingWSGIServer,
+        )
+        server.request_deadline_seconds = 2.0
+        thread = threading.Thread(target=server.serve_forever, daemon=True)
+        thread.start()
+        host, port = server.server_address
+        holders: list[socket.socket] = []
+        try:
+            for _index in range(15):
+                holders.append(_partial_connection(host, port))
+            _wait_for(lambda: server._readers_by_address.get("127.0.0.1", 0) >= 15)
+            health = _exchange(host, port, b"GET /health HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n")
+            self.assertIn(b"200", health)
+            _wait_for(lambda: server._readers_by_address.get("127.0.0.1", 0) == 15)
+            holders.append(_partial_connection(host, port))
+            _wait_for(lambda: server._readers_by_address.get("127.0.0.1", 0) >= 16)
+            denied = _read_refusal(host, port)
+            self.assertIn(b"503", denied)
+            self.assertEqual(len(holders), _MAX_READERS_PER_ADDRESS)
+            time.sleep(2.5)
+            for held in holders:
+                held.settimeout(1)
+                self.assertEqual(held.recv(64), b"")
+        finally:
+            for held in holders:
+                held.close()
+            server.shutdown()
+            server.server_close()
+
+    def test_a_trusted_proxy_is_exempt_and_the_global_cap_is_not(self) -> None:
+        """Seventeen readers from a trusted peer are accepted. A zero global cap is 503."""
+        application = Application(None)
+        application.trusted_proxies = (ipaddress.ip_network("10.1.0.9/32"),)
+        server = make_server(
+            "127.0.0.1",
+            0,
+            application,
+            server_class=ThreadingWSGIServer,
+        )
+        server.request_deadline_seconds = 5
+        pairs: list[tuple[socket.socket, socket.socket]] = []
+        try:
+            for index in range(17):
+                left, right = socket.socketpair()
+                right.settimeout(0.2)
+                pairs.append((left, right))
+                server.process_request(left, ("10.1.0.9", index))
+            for _left, right in pairs:
+                with self.assertRaises(TimeoutError):
+                    right.recv(32)
+        finally:
+            for left, right in pairs:
+                right.close()
+                left.close()
+            server.server_close()
+        blocked = make_server(
             "127.0.0.1",
             0,
             Application(None),
             server_class=ThreadingWSGIServer,
         )
+        blocked._readers = threading.BoundedSemaphore(0)
         left, right = socket.socketpair()
         try:
-            server._in_flight = threading.BoundedSemaphore(0)
-            server.process_request(left, ("127.0.0.1", 1))
+            blocked.process_request(left, ("192.0.2.1", 1))
             data = right.recv(4096)
         finally:
             right.close()
-            server.server_close()
+            blocked.server_close()
         self.assertIn(b"503", data)
-        self.assertIn(b"unavailable", data)
 
 
 class JwksTimeoutTests(unittest.TestCase):
@@ -386,3 +498,57 @@ class LoginAndTokenTests(unittest.TestCase):
         if captured["status"] == "204 No Content":
             return str(captured["status"]), {}
         return str(captured["status"]), json.loads(payload.decode("utf-8"))
+
+
+def _partial_connection(host: str, port: int) -> socket.socket:
+    """Open a connection that sends headers and never the blank line.
+
+    The server stays in the reader phase. Does not read a response.
+    """
+    sock = socket.create_connection((host, port), timeout=2)
+    sock.sendall(b"GET /health HTTP/1.1\r\nHost: x\r\n")
+    return sock
+
+
+def _read_refusal(host: str, port: int) -> bytes:
+    """Connect and return what the server writes before any request bytes.
+
+    A full reader table answers 503 at accept. Sending a body first can
+    turn that close into a TCP reset.
+    """
+    sock = socket.create_connection((host, port), timeout=2)
+    try:
+        sock.settimeout(2)
+        return sock.recv(4096)
+    finally:
+        sock.close()
+
+
+def _exchange(host: str, port: int, payload: bytes) -> bytes:
+    """Send payload and return the bytes the server writes back."""
+    sock = socket.create_connection((host, port), timeout=2)
+    try:
+        sock.sendall(payload)
+        sock.settimeout(2)
+        chunks: list[bytes] = []
+        while True:
+            try:
+                piece = sock.recv(4096)
+            except TimeoutError:
+                break
+            if piece == b"":
+                break
+            chunks.append(piece)
+        return b"".join(chunks)
+    finally:
+        sock.close()
+
+
+def _wait_for(ready) -> None:
+    """Poll ready until it returns true, or fail after two seconds."""
+    deadline = time.monotonic() + 2
+    while time.monotonic() < deadline:
+        if ready():
+            return
+        time.sleep(0.01)
+    raise AssertionError("the server did not reach the expected reader count")
