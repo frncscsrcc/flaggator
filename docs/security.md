@@ -135,7 +135,11 @@ Request logs, if added, must not include the `Authorization` header, the request
 
 A flag is private unless `public` is true. `POST /v1/client-evaluate` takes an environment `client_id` and a context, and returns only the public flags' key, value, and variation index. It does not return rules, salts, segment members, or the reason for a decision. Private flags are still evaluated when a public flag lists them as prerequisites, and they are omitted from the response.
 
-`client_id` is a random value from `secrets.token_urlsafe`, stored in clear text, and shown on environment reads. It is not a hash of the project name. Rotating it makes the previous value 404. A browser cannot keep a secret, so anyone who has the id can probe public flags with chosen contexts. That is the accepted exposure of a public flag. Private flags and evaluation-config stay behind a bearer token.
+`client_id` is a random value from `secrets.token_urlsafe`, stored in clear text, and shown on environment reads. It is not a hash of the project name. Rotating it makes the previous value 404. A browser cannot keep a secret, so anyone who has the id can probe public flags with chosen contexts. That is the accepted exposure of a public flag. Targets and segments named by a public flag stay observable the same way. Private flags and evaluation-config stay behind a bearer token.
+
+A public flag can require only public flags, including through other public flags. Making a flag public while it still reaches a private flag is rejected, and making a flag private while a public flag still reaches it is rejected. A public flag already stored that way is omitted from `POST /v1/client-evaluate`; the caller uses its own default.
+
+Patching an environment to `protected` clears its `client_id` in the same write. The public flags on that environment are exposed again only when a `protected_writer` issues a new `client_id`. That audit row lists the public flag keys the new id exposes. An environment can be protected while the project still has public flags.
 
 The route is limited per client address, separately from login: `FLAGGATOR_CLIENT_EVAL_LIMIT` (default 60) requests in `FLAGGATOR_CLIENT_EVAL_WINDOW_SECONDS` (default 60). Login is 10 attempts per address in 60 seconds. An empty address shares the bucket `unknown`. Over the limit is 429 `rate_limited`. The map lives in one process and keeps at most 4096 keys, dropping the quietest first. An unknown `client_id` is the same 404 whether or not the id once existed.
 

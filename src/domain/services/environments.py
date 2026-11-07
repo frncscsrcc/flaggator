@@ -30,6 +30,7 @@ from repositories.environments import (
 )
 from repositories.eval_cache import require_bundle_within_cap
 from repositories.flag_configs import insert_disabled_config, list_flag_ids
+from repositories.flags import list_public_flag_keys
 from repositories.projects import find_project
 
 
@@ -77,7 +78,7 @@ def create_environment(
             key,
             None,
             None,
-            _environment_document(key, name, protected),
+            _environment_document(key, name, protected, None),
         )
         require_bundle_within_cap(connection, project.id, environment_id, project.key, key)
     return Environment(key=key, name=name, protected=protected, client_id=None)
@@ -119,9 +120,18 @@ def patch_environment(
                 protected=current.protected,
                 client_id=current.client_id,
             )
-        before = _environment_document(current.key, current.name, current.protected)
+        before = _environment_document(
+            current.key,
+            current.name,
+            current.protected,
+            current.client_id,
+        )
         update_environment(connection, current.id, next_name, next_protected)
-        after = _environment_document(current.key, next_name, next_protected)
+        next_client_id = current.client_id
+        if next_protected and not current.protected:
+            set_client_id(connection, current.id, None)
+            next_client_id = None
+        after = _environment_document(current.key, next_name, next_protected, next_client_id)
         record_change(
             connection,
             principal,
@@ -136,7 +146,7 @@ def patch_environment(
         key=current.key,
         name=next_name,
         protected=next_protected,
-        client_id=current.client_id,
+        client_id=next_client_id,
     )
 
 
@@ -175,8 +185,8 @@ def issue_client_id(
             project.key,
             current.key,
             None,
-            _client_id_document(current.client_id),
-            _client_id_document(client_id),
+            _client_id_document(current.client_id, ()),
+            _client_id_document(client_id, list_public_flag_keys(connection, project.id)),
         )
     return Environment(
         key=current.key,
@@ -244,25 +254,27 @@ def _unused_client_id(connection: Connection) -> str:
     raise StorageError()
 
 
-def _client_id_document(client_id: str | None) -> str:
+def _client_id_document(client_id: str | None, public_flags: list[str] | tuple[str, ...]) -> str:
     """Return the audit JSON for a client id.
 
-    The id is not a secret. Does not read the database.
+    public_flags are the keys this id exposes. The id is not a secret.
+    Does not read the database.
     """
     return json.dumps(
-        {"client_id": client_id},
+        {"client_id": client_id, "public_flags": list(public_flags)},
         sort_keys=True,
         separators=(",", ":"),
     )
 
 
-def _environment_document(key: str, name: str, protected: bool) -> str:
+def _environment_document(key: str, name: str, protected: bool, client_id: str | None) -> str:
     """Return the audit JSON for an environment.
 
-    The document has the public fields only. Does not include a secret.
+    The document has the public fields and the client id. Does not include
+    a secret.
     """
     return json.dumps(
-        {"key": key, "name": name, "protected": protected},
+        {"client_id": client_id, "key": key, "name": name, "protected": protected},
         sort_keys=True,
         separators=(",", ":"),
     )

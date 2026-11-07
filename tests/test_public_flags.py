@@ -15,7 +15,7 @@ from api.http import Application
 from cache.memory import MemoryCache
 from composition import bootstrap_management_token, load_settings
 from domain.services.authentication import JwtSettings
-from repositories.eval_cache import EvaluationCache
+from repositories.eval_cache import EvaluationCache, cache_key
 from repositories.migrate import apply_migrations, default_migrations_directory
 from repositories.sqlite import SqliteDatabase
 
@@ -45,9 +45,10 @@ class PublicFlagTests(unittest.TestCase):
         )
         bootstrap_management_token(settings, secret_out, io.StringIO())
         self.token = secret_out.getvalue().strip()
+        self.memory = MemoryCache()
         self.application = Application(
             self.database,
-            EvaluationCache(MemoryCache(), 3600),
+            EvaluationCache(self.memory, 3600),
             jwt_settings=_JWT,
         )
 
@@ -73,6 +74,81 @@ class PublicFlagTests(unittest.TestCase):
         self.assertIs(body["public"], False)
         self.assertEqual(listed_status, "200 OK")
         self.assertIs(listed["items"][0]["public"], False)
+
+    def test_a_public_flag_cannot_depend_on_a_private_one(self) -> None:
+        """A public flag may require only public flags, and protecting clears the client id.
+
+        A stored public flag that reaches a private flag is omitted from
+        client evaluation. Issuing a new client id lists the public keys.
+        """
+        self._project()
+        self.call(
+            "POST",
+            "/v1/projects/shop/environments",
+            {"key": "prod", "name": "Production"},
+        )
+        self._flag("inner", public=False)
+        self._flag("outer", public=True)
+        denied_status, denied = self.call(
+            "PUT",
+            "/v1/projects/shop/flags/outer/environments/prod",
+            self._targeting(1, prerequisites=[{"flag_key": "inner", "variation_index": 1}]),
+        )
+        made_public_status, _made_public = self.call(
+            "PATCH",
+            "/v1/projects/shop/flags/inner",
+            {"public": True},
+        )
+        allowed_status, _allowed = self.call(
+            "PUT",
+            "/v1/projects/shop/flags/outer/environments/prod",
+            self._targeting(1, prerequisites=[{"flag_key": "inner", "variation_index": 1}]),
+        )
+        hide_status, hide = self.call(
+            "PATCH",
+            "/v1/projects/shop/flags/inner",
+            {"public": False},
+        )
+        issued_status, issued = self.call("POST", "/v1/projects/shop/environments/prod/client-id")
+        connection = self.database.connect()
+        try:
+            with connection.transaction():
+                connection.execute(
+                    """
+                    UPDATE flags SET public = 0
+                     WHERE `key` = 'inner'
+                       AND project_id = (SELECT id FROM projects WHERE `key` = 'shop')
+                    """
+                )
+        finally:
+            connection.close()
+        self.memory.delete(cache_key("shop", "prod"))
+        evaluated_status, evaluated = self.call(
+            "POST",
+            "/v1/client-evaluate",
+            {"client_id": issued["client_id"], "context": {"subject": "alice"}},
+            authorization=None,
+        )
+        protected_status, protected = self.call(
+            "PATCH",
+            "/v1/projects/shop/environments/prod",
+            {"protected": True},
+        )
+        again_status, again = self.call("POST", "/v1/projects/shop/environments/prod/client-id")
+        self.assertEqual(denied_status, "400 Bad Request")
+        self.assertEqual(denied["error"]["details"][0]["field"], "prerequisites")
+        self.assertEqual(made_public_status, "200 OK")
+        self.assertEqual(allowed_status, "200 OK")
+        self.assertEqual(hide_status, "400 Bad Request")
+        self.assertEqual(hide["error"]["details"][0]["field"], "public")
+        self.assertEqual(issued_status, "200 OK")
+        self.assertEqual(evaluated_status, "200 OK")
+        self.assertEqual(evaluated["flags"], [])
+        self.assertEqual(protected_status, "200 OK")
+        self.assertIsNone(protected["client_id"])
+        self.assertIs(protected["protected"], True)
+        self.assertEqual(again_status, "200 OK")
+        self.assertIsNotNone(again["client_id"])
 
     def test_writer_cannot_issue_a_client_id_for_a_protected_environment(self) -> None:
         """A writer may rotate a normal environment, not a protected one."""
@@ -149,14 +225,14 @@ class PublicFlagTests(unittest.TestCase):
         self.assertIs(allowed["public"], True)
 
     def test_client_evaluate_returns_public_flags_without_a_bearer(self) -> None:
-        """The public route omits private flags and reasons, and a private prerequisite still applies."""
+        """The public route omits private flags and reasons. A public prerequisite still applies."""
         self._project()
         self.call(
             "POST",
             "/v1/projects/shop/environments",
             {"key": "prod", "name": "Production"},
         )
-        self._flag("gate", public=False)
+        self._flag("gate", public=True)
         self._flag("show", public=True)
         self.call(
             "PUT",
@@ -193,11 +269,22 @@ class PublicFlagTests(unittest.TestCase):
             authorization=None,
         )
         self.assertEqual(hidden_status, "200 OK")
-        self.assertEqual(hidden["flags"], [{"key": "show", "value": False, "variation_index": 0}])
+        self.assertEqual(
+            hidden["flags"],
+            [
+                {"key": "gate", "value": False, "variation_index": 0},
+                {"key": "show", "value": False, "variation_index": 0},
+            ],
+        )
         self.assertNotIn("reason", json.dumps(hidden))
-        self.assertNotIn("gate", json.dumps(hidden["flags"]))
         self.assertEqual(shown_status, "200 OK")
-        self.assertEqual(shown["flags"], [{"key": "show", "value": True, "variation_index": 1}])
+        self.assertEqual(
+            shown["flags"],
+            [
+                {"key": "gate", "value": True, "variation_index": 1},
+                {"key": "show", "value": True, "variation_index": 1},
+            ],
+        )
 
     def test_a_rotated_client_id_is_not_found(self) -> None:
         """The previous client id stops resolving, and a valid id with no public flags is an empty list."""

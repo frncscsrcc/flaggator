@@ -97,11 +97,11 @@ def find_environment(
     return _environment_row(row)
 
 
-def set_client_id(connection: Connection, environment_id: int, client_id: str) -> None:
+def set_client_id(connection: Connection, environment_id: int, client_id: str | None) -> None:
     """Store client_id on one environment, replacing any previous value.
 
-    Raises ConstraintViolation when another environment already has that
-    id. Does not commit.
+    None clears the id. Raises ConstraintViolation when another environment
+    already has a non-null id. Does not commit.
     """
     connection.execute(
         """

@@ -73,6 +73,23 @@ def update_flag_text(
     )
 
 
+def list_public_flag_keys(connection: Connection, project_id: int) -> list[str]:
+    """Return the public flag keys in project_id, ordered by key.
+
+    A project with no public flags returns an empty list. Does not commit.
+    """
+    rows = connection.execute(
+        """
+        SELECT `key`
+          FROM flags
+         WHERE project_id = ? AND public = 1
+         ORDER BY `key`
+        """,
+        (project_id,),
+    ).fetchall()
+    return [str(row["key"]) for row in rows]
+
+
 def find_flag(connection: Connection, project_id: int, key: str) -> FlagRow | None:
     """Load one flag by its public key inside a project.
 

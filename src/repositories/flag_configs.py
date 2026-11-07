@@ -307,6 +307,40 @@ def list_environment_targets(connection: Connection, environment_id: int) -> lis
     return [load_json_text(row["targets_json"]) for row in rows]
 
 
+def list_project_prerequisite_edges(
+    connection: Connection,
+    project_id: int,
+) -> list[tuple[str, bool, list[str]]]:
+    """Return each flag and the prerequisite keys stored on one config.
+
+    A flag with no configuration is one row with an empty key list. A flag
+    with several environments is one row per environment. Does not commit.
+    """
+    rows = connection.execute(
+        """
+        SELECT flags.`key` AS flag_key,
+               flags.public AS public,
+               flag_configs.prerequisites_json AS prerequisites_json
+          FROM flags
+          LEFT JOIN flag_configs ON flag_configs.flag_id = flags.id
+         WHERE flags.project_id = ?
+        """,
+        (project_id,),
+    ).fetchall()
+    edges: list[tuple[str, bool, list[str]]] = []
+    for row in rows:
+        raw = row["prerequisites_json"]
+        keys: list[str] = []
+        if raw is not None:
+            parsed = load_json_text(raw)
+            if isinstance(parsed, list):
+                for item in parsed:
+                    if isinstance(item, dict) and isinstance(item.get("flag_key"), str):
+                        keys.append(str(item["flag_key"]))
+        edges.append((str(row["flag_key"]), int(row["public"]) == 1, keys))
+    return edges
+
+
 def _config_row(row: Mapping[str, object]) -> FlagConfigRow:
     """Map one joined config row into a FlagConfigRow.
 

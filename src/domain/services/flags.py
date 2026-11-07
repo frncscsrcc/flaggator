@@ -58,6 +58,7 @@ from repositories.flag_configs import (
     find_config_summary,
     insert_disabled_config,
     list_configs,
+    list_project_prerequisite_edges,
 )
 from repositories.projects import ProjectRow, find_project
 
@@ -198,6 +199,8 @@ def patch_flag(
         stored_public = current.public if command.public is None else command.public
         if stored_public != current.public and has_protected_environment(connection, project.id):
             require_protected_writer(principal)
+        if stored_public != current.public:
+            require_public_bit_change(connection, project.id, current.key, stored_public)
         tail = _appended_variations(current.variations, command.variations)
         row = find_flag(connection, project.id, current.key)
         if row is None:
@@ -379,6 +382,114 @@ def _checked_query(query: KeysetQuery) -> KeysetQuery:
             details=[{"field": "cursor", "message": "Send the cursor from a previous page."}],
         )
     return KeysetQuery(limit=limit, after_key=query.after_key)
+
+
+def require_public_flag_prerequisites(
+    connection: Connection,
+    project_id: int,
+    prerequisite_keys: list[str],
+) -> None:
+    """Raise ValidationError when a public flag would depend on a private flag.
+
+    Each named flag, and every flag that flag reaches, must be public.
+    Does not commit. The caller has already checked that the keys exist.
+    """
+    graph = _prerequisite_graph(connection, project_id)
+    for key in prerequisite_keys:
+        public, _edges = graph.get(key, (False, set()))
+        if not public or _closure_has_private(graph, key):
+            raise ValidationError(
+                "A public flag cannot depend on a private flag.",
+                details=[
+                    {
+                        "field": "prerequisites",
+                        "message": "A public flag can only require public flags.",
+                    }
+                ],
+            )
+
+
+def require_public_bit_change(
+    connection: Connection,
+    project_id: int,
+    flag_key: str,
+    becoming_public: bool,
+) -> None:
+    """Raise ValidationError when the public bit would cross a private flag.
+
+    Making a flag public is refused when its prerequisite closure contains
+    a private flag. Making it private is refused when a public flag reaches
+    it. Does not commit.
+    """
+    graph = _prerequisite_graph(connection, project_id)
+    if becoming_public:
+        if _closure_has_private(graph, flag_key):
+            raise ValidationError(
+                "A public flag cannot depend on a private flag.",
+                details=[
+                    {
+                        "field": "public",
+                        "message": "Make the prerequisite flags public first.",
+                    }
+                ],
+            )
+        return
+    for key, (public, _edges) in graph.items():
+        if key == flag_key or not public:
+            continue
+        if flag_key in _reached(graph, key):
+            raise ValidationError(
+                "A public flag cannot depend on a private flag.",
+                details=[
+                    {
+                        "field": "public",
+                        "message": "A public flag still requires this flag.",
+                    }
+                ],
+            )
+
+
+def _prerequisite_graph(
+    connection: Connection,
+    project_id: int,
+) -> dict[str, tuple[bool, set[str]]]:
+    """Return each flag's public bit and the union of its prerequisite keys.
+
+    Does not commit.
+    """
+    graph: dict[str, tuple[bool, set[str]]] = {}
+    for key, public, prerequisites in list_project_prerequisite_edges(connection, project_id):
+        stored_public, edges = graph.get(key, (public, set()))
+        edges.update(prerequisites)
+        graph[key] = (stored_public, edges)
+    return graph
+
+
+def _reached(graph: dict[str, tuple[bool, set[str]]], flag_key: str) -> set[str]:
+    """Return the flags flag_key reaches, not including itself.
+
+    Does not read the database.
+    """
+    seen: set[str] = set()
+    stack = list(graph.get(flag_key, (False, set()))[1])
+    while stack:
+        key = stack.pop()
+        if key in seen:
+            continue
+        seen.add(key)
+        stack.extend(graph.get(key, (False, set()))[1])
+    return seen
+
+
+def _closure_has_private(graph: dict[str, tuple[bool, set[str]]], flag_key: str) -> bool:
+    """Return True when flag_key reaches a flag that is not public.
+
+    Does not read the database.
+    """
+    for key in _reached(graph, flag_key):
+        if not graph.get(key, (False, set()))[0]:
+            return True
+    return False
 
 
 def _audit_document(flag: Flag) -> str:

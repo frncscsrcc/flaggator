@@ -114,9 +114,11 @@ def evaluate_public(
     """Return decisions for the public flags of the environment client_id names.
 
     Evaluation uses the whole bundle, so a private prerequisite still
-    changes the public flag's value. The caller drops reason, rule id, and
-    version. An unknown client_id is NotFound. Does not store the context
-    and does not check a credential.
+    changes a public flag's value. A public flag whose prerequisite
+    closure contains a private flag is omitted, and the caller uses its
+    own default. The caller drops reason, rule id, and version. An unknown
+    client_id is NotFound. Does not store the context and does not check
+    a credential.
     """
     checked = _checked_context(context)
     if client_id == "" or len(client_id) > 64:
@@ -132,6 +134,7 @@ def evaluate_public(
         scope.environment_key,
     )
     definitions = _definitions(document)
+    hidden = _hidden_public_keys(document["flags"])
     decisions: list[Decision] = []
     memo: dict[tuple[str, int], Decision] = {}
     for flag in document["flags"]:
@@ -142,6 +145,8 @@ def evaluate_public(
         flag_key = flag.get("key")
         if not isinstance(flag_key, str):
             raise StorageError()
+        if flag_key in hidden:
+            continue
         decisions.append(evaluate(flag_key, definitions, checked, memo=memo))
     return decisions
 
@@ -336,6 +341,60 @@ def _is_scalar(value: object) -> bool:
         return True
     if isinstance(value, float):
         return math.isfinite(value)
+    return False
+
+
+def _hidden_public_keys(flags: object) -> set[str]:
+    """Return public flags whose prerequisite closure contains a private flag.
+
+    The caller omits those flags and uses its own default. Targets and
+    segments of a flag that is returned stay in the bundle. Does not read
+    the database and does not mutate flags.
+    """
+    if not isinstance(flags, list):
+        return set()
+    public: dict[str, bool] = {}
+    edges: dict[str, list[str]] = {}
+    for flag in flags:
+        if not isinstance(flag, dict):
+            continue
+        key = flag.get("key")
+        if not isinstance(key, str):
+            continue
+        public[key] = flag.get("public") is True
+        prerequisites = flag.get("prerequisites")
+        keys: list[str] = []
+        if isinstance(prerequisites, list):
+            for item in prerequisites:
+                if isinstance(item, dict) and isinstance(item.get("flag_key"), str):
+                    keys.append(str(item["flag_key"]))
+        edges[key] = keys
+    hidden: set[str] = set()
+    for key, is_public in public.items():
+        if is_public and _reaches_private(key, public, edges):
+            hidden.add(key)
+    return hidden
+
+
+def _reaches_private(
+    flag_key: str,
+    public: dict[str, bool],
+    edges: dict[str, list[str]],
+) -> bool:
+    """Return True when flag_key reaches a flag that is not public.
+
+    A missing flag counts as private. Does not read the database.
+    """
+    seen: set[str] = set()
+    stack = list(edges.get(flag_key, ()))
+    while stack:
+        key = stack.pop()
+        if key in seen:
+            continue
+        seen.add(key)
+        if not public.get(key, False):
+            return True
+        stack.extend(edges.get(key, ()))
     return False
 
 

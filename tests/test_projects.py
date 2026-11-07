@@ -256,7 +256,10 @@ class ProjectTests(unittest.TestCase):
         self.assertEqual(environment_audits[0]["project_key"], "shop")
         self.assertEqual(environment_audits[0]["environment_key"], "prod")
         self.assertIsNone(environment_audits[0]["flag_key"])
-        self.assertEqual(environment_audits[0]["after_json"], '{"key":"prod","name":"Production","protected":false}')
+        self.assertEqual(
+            environment_audits[0]["after_json"],
+            '{"client_id":null,"key":"prod","name":"Production","protected":false}',
+        )
         self.assertNotIn(self.token, str(environment_audits[0]["after_json"]))
 
     def test_create_and_patch_environment_protected(self) -> None:
@@ -293,8 +296,14 @@ class ProjectTests(unittest.TestCase):
         self.assertEqual(missing["error"]["message"], "Environment does not exist.")
         patch_audits = [row for row in self.audit_rows() if row["action"] == "environment.patch"]
         self.assertEqual(len(patch_audits), 1)
-        self.assertEqual(patch_audits[0]["before_json"], '{"key":"prod","name":"Production","protected":true}')
-        self.assertEqual(patch_audits[0]["after_json"], '{"key":"prod","name":"Prod","protected":false}')
+        self.assertEqual(
+            patch_audits[0]["before_json"],
+            '{"client_id":null,"key":"prod","name":"Production","protected":true}',
+        )
+        self.assertEqual(
+            patch_audits[0]["after_json"],
+            '{"client_id":null,"key":"prod","name":"Prod","protected":false}',
+        )
 
     def test_environment_key_is_unique_inside_one_project(self) -> None:
         """The same environment key is a conflict in one project and allowed in another."""
@@ -380,7 +389,7 @@ class ProjectTests(unittest.TestCase):
         self.assertEqual(body["items"][0]["actor"]["kind"], "management")
         self.assertEqual(
             body["items"][0]["after"],
-            {"key": "dev", "name": "Development", "protected": False},
+            {"client_id": None, "key": "dev", "name": "Development", "protected": False},
         )
         self.assertIsNone(body["items"][0]["before"])
         self.assertEqual(body["items"][2]["action"], "project.create")

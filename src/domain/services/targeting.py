@@ -35,6 +35,7 @@ from domain.validation import (
 )
 from repositories.db import Connection
 from repositories.environments import EnvironmentRow, find_environment
+from domain.services.flags import require_public_flag_prerequisites
 from repositories.eval_cache import EvaluationCache, require_bundle_within_cap
 from repositories.flag_configs import (
     FlagConfigRow,
@@ -597,6 +598,13 @@ def _prerequisite_documents(
             available,
             "prerequisites",
             "Use a variation index from that flag.",
+        )
+    current = find_flag(connection, project_id, flag_key)
+    if current is not None and current.public:
+        require_public_flag_prerequisites(
+            connection,
+            project_id,
+            [item.flag_key for item in command.prerequisites],
         )
     _reject_cycles(connection, environment_id, flag_key, command)
     documents: list[dict] = []
