@@ -13,7 +13,7 @@ from pathlib import Path
 from typing import TextIO
 
 from api.console import default_console_directory
-from api.http import Application
+from api.http import Application, loopback_host
 from cache.memory import MemoryCache
 from cache.null import NullCache
 from cache.protocol import Cache
@@ -55,6 +55,7 @@ class Settings:
     client_eval_window_seconds: int
     trusted_proxies: tuple[ipaddress.IPv4Network | ipaddress.IPv6Network, ...]
     headless: bool
+    allow_cleartext_bind: bool
     migrations_directory: Path
 
     def __repr__(self) -> str:
@@ -72,7 +73,8 @@ class Settings:
             f"client_eval_limit={self.client_eval_limit!r}, "
             f"client_eval_window_seconds={self.client_eval_window_seconds!r}, "
             f"trusted_proxies={self.trusted_proxies!r}, "
-            f"headless={self.headless!r})"
+            f"headless={self.headless!r}, "
+            f"allow_cleartext_bind={self.allow_cleartext_bind!r})"
         )
 
 
@@ -112,7 +114,10 @@ def load_settings(environment: Mapping[str, str] | None = None) -> Settings:
         mysql_password=source.get("FLAGGATOR_MYSQL_PASSWORD", ""),
         mysql_ssl_ca=_mysql_ssl_ca(source.get("FLAGGATOR_MYSQL_SSL_CA", "")),
         cache=source.get("FLAGGATOR_CACHE", "memory"),
-        bind_host=source.get("FLAGGATOR_BIND_HOST", "127.0.0.1"),
+        bind_host=_bind_host(
+            source.get("FLAGGATOR_BIND_HOST", "127.0.0.1"),
+            _cleartext_bind(source.get("FLAGGATOR_ALLOW_CLEARTEXT_BIND", "")),
+        ),
         bind_port=_port(source.get("FLAGGATOR_BIND_PORT", "8080"), "bind_port"),
         eval_ttl_seconds=_positive_int(
             source.get("FLAGGATOR_EVAL_TTL_SECONDS", str(DEFAULT_EVAL_TTL_SECONDS)),
@@ -133,6 +138,7 @@ def load_settings(environment: Mapping[str, str] | None = None) -> Settings:
         ),
         trusted_proxies=_trusted_proxies(source.get("FLAGGATOR_TRUSTED_PROXIES", "")),
         headless=_headless(source.get("FLAGGATOR_HEADLESS", "")),
+        allow_cleartext_bind=_cleartext_bind(source.get("FLAGGATOR_ALLOW_CLEARTEXT_BIND", "")),
         migrations_directory=default_migrations_directory(),
     )
 
@@ -238,6 +244,49 @@ def bootstrap_management_token(
     notice_stream.write("Save this token. It will not be shown again.\n")
     secret_stream.write(token + "\n")
     secret_stream.flush()
+
+
+def _bind_host(host: str, allow_cleartext: bool) -> str:
+    """Return host when it may be bound.
+
+    A non-loopback host requires allow_cleartext, which serves cleartext
+    HTTP on that interface. Raises ValidationError otherwise. Does not bind.
+    """
+    if allow_cleartext or loopback_host(host):
+        return host
+    raise ValidationError(
+        "The bind address is not loopback.",
+        details=[
+            {
+                "field": "bind_host",
+                "message": (
+                    "Bind a loopback address, or set "
+                    "FLAGGATOR_ALLOW_CLEARTEXT_BIND=true to serve cleartext HTTP."
+                ),
+            }
+        ],
+    )
+
+
+def _cleartext_bind(raw: str) -> bool:
+    """Return whether a non-loopback bind is accepted.
+
+    Empty and false refuse it. true allows cleartext HTTP on that
+    interface. Any other value raises ValidationError.
+    """
+    if raw == "" or raw == "false":
+        return False
+    if raw == "true":
+        return True
+    raise ValidationError(
+        "The cleartext bind setting is not valid.",
+        details=[
+            {
+                "field": "allow_cleartext_bind",
+                "message": "FLAGGATOR_ALLOW_CLEARTEXT_BIND must be true or false.",
+            }
+        ],
+    )
 
 
 def _headless(raw: str) -> bool:

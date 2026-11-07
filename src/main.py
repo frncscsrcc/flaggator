@@ -32,7 +32,12 @@ def main(argv: list[str] | None = None) -> None:
     from composition import load_settings, prepare
 
     runtime = prepare(load_settings())
-    serve(runtime.application, runtime.settings.bind_host, runtime.settings.bind_port)
+    serve(
+        runtime.application,
+        runtime.settings.bind_host,
+        runtime.settings.bind_port,
+        allow_cleartext=runtime.settings.allow_cleartext_bind,
+    )
 
 
 if __name__ == "__main__":

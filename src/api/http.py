@@ -429,15 +429,49 @@ def encode(start_response: StartResponse, response: Response) -> list[bytes]:
     return [payload]
 
 
-def serve(application: Application, host: str, port: int) -> None:
+def serve(
+    application: Application,
+    host: str,
+    port: int,
+    allow_cleartext: bool = False,
+) -> None:
     """Listen for HTTP requests until the process is killed.
 
-    Binds host and port. Each request runs on its own thread. Does not
-    return. python -m main calls this. Tests of a single route call the
-    application directly and do not bind a port.
+    A host that is not loopback is refused unless allow_cleartext is true,
+    because this listener speaks cleartext HTTP. Binds host and port. Each
+    request runs on its own thread. Does not return. python -m main calls
+    this. Tests of a single route call the application directly and do not
+    bind a port.
     """
+    if not allow_cleartext and not loopback_host(host):
+        raise ValidationError(
+            "The bind address is not loopback.",
+            details=[
+                {
+                    "field": "bind_host",
+                    "message": (
+                        "Bind a loopback address, or set "
+                        "FLAGGATOR_ALLOW_CLEARTEXT_BIND=true to serve cleartext HTTP."
+                    ),
+                }
+            ],
+        )
     server = make_server(host, port, application, server_class=ThreadingWSGIServer)
     server.serve_forever()
+
+
+def loopback_host(host: str) -> bool:
+    """Return True when host is a loopback address or the name localhost.
+
+    Does not resolve DNS. An unparsable name other than localhost is not
+    loopback.
+    """
+    if host == "localhost":
+        return True
+    try:
+        return ipaddress.ip_address(host).is_loopback
+    except ValueError:
+        return False
 
 
 def _close_quietly(request: socket.socket) -> None:

@@ -100,6 +100,23 @@ class SettingsTests(unittest.TestCase):
             load_settings({"FLAGGATOR_TRUSTED_PROXIES": "not-a-proxy"})
         self.assertEqual(caught.exception.details[0]["field"], "trusted_proxies")
 
+    def test_a_public_bind_needs_the_cleartext_opt_in(self) -> None:
+        """0.0.0.0 is refused until the process is told to serve cleartext HTTP."""
+        with self.assertRaises(ValidationError) as caught:
+            load_settings({"FLAGGATOR_BIND_HOST": "0.0.0.0"})
+        self.assertEqual(caught.exception.details[0]["field"], "bind_host")
+        settings = load_settings(
+            {
+                "FLAGGATOR_BIND_HOST": "0.0.0.0",
+                "FLAGGATOR_ALLOW_CLEARTEXT_BIND": "true",
+            }
+        )
+        self.assertEqual(settings.bind_host, "0.0.0.0")
+        self.assertTrue(settings.allow_cleartext_bind)
+        loopback = load_settings({"FLAGGATOR_BIND_HOST": "localhost"})
+        self.assertEqual(loopback.bind_host, "localhost")
+        self.assertFalse(loopback.allow_cleartext_bind)
+
     def test_bad_port_is_a_validation_error(self) -> None:
         """A non-numeric bind port fails before a socket is opened."""
         with self.assertRaises(ValidationError) as caught:

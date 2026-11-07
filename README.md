@@ -64,7 +64,7 @@ If you already have a database from before the `users` table and `environments.p
 python -m main
 ```
 
-The process listens on `127.0.0.1:8080`. `FLAGGATOR_BIND_HOST`, `FLAGGATOR_BIND_PORT`, and `FLAGGATOR_SQLITE_PATH` change the address and the database file.
+The process listens on `127.0.0.1:8080`. `FLAGGATOR_BIND_HOST`, `FLAGGATOR_BIND_PORT`, and `FLAGGATOR_SQLITE_PATH` change the address and the database file. A host that is not loopback (`127.0.0.1`, `::1`, or `localhost`) is refused unless `FLAGGATOR_ALLOW_CLEARTEXT_BIND=true`. That opt-in is cleartext HTTP on the interface you named. Put TLS on a proxy in front of it.
 
 The same process serves the operator console. The sign-in page is `http://127.0.0.1:8080/login.html`. `FLAGGATOR_HEADLESS=true` serves only the API; a console path is then 404. Any other value stops startup. Omitted, empty, and `false` serve the console.
 
@@ -72,7 +72,7 @@ The same process serves the operator console. The sign-in page is `http://127.0.
 
 `Dockerfile` builds one process on `python:3.12-slim-bookworm`. The image does not add gunicorn or uvicorn. `python -m main` is the HTTP server: the standard-library WSGI server, at most 32 requests in flight once the body has been read, and a 30 second deadline measured from accept. A published port should sit behind a proxy that buffers the whole request.
 
-The image listens on `0.0.0.0:8080` so a published port reaches the process. The SQLite file is `/data/flaggator.db`. Use the same volume and the same `FLAGGATOR_JWT_SECRET` for bootstrap and for the long-running process: the management token is stored in the database, and the secret signs local login tokens. A bind-mounted data directory must be writable by uid 1000.
+The image listens on `0.0.0.0:8080` and sets `FLAGGATOR_ALLOW_CLEARTEXT_BIND=true`, so the process serves cleartext HTTP on every interface. Put TLS on the proxy in front of the container. The SQLite file is `/data/flaggator.db`. Use the same volume and the same `FLAGGATOR_JWT_SECRET` for bootstrap and for the long-running process: the management token is stored in the database, and the secret signs local login tokens. A bind-mounted data directory must be writable by uid 1000.
 
 ```bash
 export FLAGGATOR_JWT_SECRET="$(python -c 'import secrets; print(secrets.token_urlsafe(32))')"

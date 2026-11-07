@@ -196,6 +196,8 @@ Exceeding a limit is `ValidationError` (400), not a truncated write.
 
 ## Dependency policy
 
+`FLAGGATOR_BIND_HOST` defaults to loopback. Any other address is refused at startup unless `FLAGGATOR_ALLOW_CLEARTEXT_BIND=true`. The opt-in means the process speaks cleartext HTTP on that interface. The Docker image sets it because the image binds `0.0.0.0:8080` and TLS belongs on the proxy in front of the container.
+
 The default install uses the standard library plus JWT libraries: `sqlite3`, `http.server` or `wsgiref`, `json`, `hashlib`, `hmac`, `secrets`, `dataclasses`, **PyJWT** (MIT), and **cryptography** (via `PyJWT[crypto]`; Apache-2.0 / BSD).
 
 **PyJWT** signs local HS256 tokens and verifies HS256 or IdP JWKS tokens (`domain/jwt.py`). The `crypto` extra pulls in **cryptography** so RS*/ES* JWKS verification works. Reason: prefer a known JWT stack over hand-rolled serialization and key handling. Licenses are MIT-compatible with flaggator.
