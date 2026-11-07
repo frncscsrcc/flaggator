@@ -4,6 +4,7 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import MagicMock, patch
 
 _SRC = Path(__file__).resolve().parents[1] / "src"
 if str(_SRC) not in sys.path:
@@ -30,6 +31,7 @@ class SettingsTests(unittest.TestCase):
         self.assertEqual(settings.bind_port, 8080)
         self.assertEqual(settings.eval_ttl_seconds, 5)
         self.assertEqual(settings.mysql_password, "")
+        self.assertEqual(settings.mysql_ssl_ca, "")
         self.assertEqual(settings.jwt_secret, "")
         self.assertEqual(settings.jwt_issuer, "flaggator")
         self.assertEqual(settings.jwt_audience, "flaggator")
@@ -61,6 +63,15 @@ class SettingsTests(unittest.TestCase):
         with self.assertRaises(ValidationError) as caught:
             load_settings({"FLAGGATOR_JWT_TTL_SECONDS": "86401"})
         self.assertEqual(caught.exception.details[0]["field"], "jwt_ttl_seconds")
+
+    def test_mysql_ssl_ca_must_be_a_readable_file(self) -> None:
+        """An empty CA keeps cleartext. A missing path fails startup."""
+        with self.assertRaises(ValidationError) as caught:
+            load_settings({"FLAGGATOR_MYSQL_SSL_CA": "/no/such/ca.pem"})
+        self.assertEqual(caught.exception.details[0]["field"], "mysql_ssl_ca")
+        with tempfile.NamedTemporaryFile() as handle:
+            settings = load_settings({"FLAGGATOR_MYSQL_SSL_CA": handle.name})
+        self.assertEqual(settings.mysql_ssl_ca, handle.name)
 
     def test_short_jwt_secret_is_rejected(self) -> None:
         """A non-empty signing secret shorter than 32 bytes fails at startup."""
@@ -106,6 +117,27 @@ class SettingsTests(unittest.TestCase):
         database = build_database(settings)
         self.assertIsInstance(database, MysqlDatabase)
         self.assertNotIn("secret-password", repr(database))
+
+    def test_mysql_tls_is_opt_in_on_connect(self) -> None:
+        """A CA path asks the driver to verify the certificate and the hostname.
+
+        An empty path does not pass those arguments, so the session stays cleartext.
+        """
+        secured = MysqlDatabase("db.internal", 3306, "flaggator", "app", "secret", ssl_ca="/ca.pem")
+        clear = MysqlDatabase("db.internal", 3306, "flaggator", "app", "secret")
+        secured_driver = MagicMock()
+        clear_driver = MagicMock()
+        with patch("repositories.mysql._import_pymysql", return_value=secured_driver):
+            secured.connect()
+        with patch("repositories.mysql._import_pymysql", return_value=clear_driver):
+            clear.connect()
+        secured_args = secured_driver.connect.call_args.kwargs
+        clear_args = clear_driver.connect.call_args.kwargs
+        self.assertEqual(secured_args["ssl_ca"], "/ca.pem")
+        self.assertIs(secured_args["ssl_verify_cert"], True)
+        self.assertIs(secured_args["ssl_verify_identity"], True)
+        self.assertNotIn("ssl_ca", clear_args)
+        self.assertNotIn("secret", repr(secured))
 
     def test_prepare_migrates_a_fresh_sqlite_file(self) -> None:
         """prepare records migrations 0001 through 0003 and builds the null cache.

@@ -9,7 +9,7 @@ Configuration selects the engine ([A7](decisions.md)).
 | Engine | Driver | When |
 | --- | --- | --- |
 | SQLite | `sqlite3` from the standard library | Default. A file path in configuration. |
-| MySQL | PyMySQL, optional extra, imported only by the MySQL module | Host, database, user, and password in configuration. InnoDB, `utf8mb4`. |
+| MySQL | PyMySQL, optional extra, imported only by the MySQL module | Host, database, user, and password in configuration. InnoDB, `utf8mb4`. `users.email` is `utf8mb4_bin`, so two emails that differ only by case or accents are different rows. `FLAGGATOR_MYSQL_SSL_CA` empty keeps the session cleartext. A path is the CA file; the driver then checks the server certificate and its hostname. A missing or unreadable path is a startup error, not a cleartext fallback. |
 
 Repository functions do not import either driver. They call a connection wrapper. The wrapper is the dialect seam ([P3](decisions.md)).
 

@@ -128,16 +128,27 @@ class MysqlDatabase:
     engine = "mysql"
     transactional_ddl = False
 
-    def __init__(self, host: str, port: int, database: str, user: str, password: str) -> None:
+    def __init__(
+        self,
+        host: str,
+        port: int,
+        database: str,
+        user: str,
+        password: str,
+        ssl_ca: str = "",
+    ) -> None:
         """Remember the coordinates. Does not connect yet.
 
-        password is kept for connect(). Do not log this object.
+        password is kept for connect(). ssl_ca empty keeps the session
+        cleartext. A path is the CA file passed to the driver with
+        certificate and hostname checks on. Do not log this object.
         """
         self._host = host
         self._port = port
         self._database = database
         self._user = user
         self._password = password
+        self._ssl_ca = ssl_ca
 
     def __repr__(self) -> str:
         """Describe the target without the password."""
@@ -149,21 +160,28 @@ class MysqlDatabase:
     def connect(self) -> MysqlConnection:
         """Open a utf8mb4 session with autocommit off.
 
+        When ssl_ca was set, the driver verifies the server certificate
+        and its hostname. An empty ssl_ca leaves the session cleartext.
         Raises StorageError when PyMySQL is not installed or the server
         rejects the connection. The driver message stays on the chain.
         """
         pymysql_module = _import_pymysql()
+        arguments: dict[str, object] = {
+            "host": self._host,
+            "port": self._port,
+            "user": self._user,
+            "password": self._password,
+            "database": self._database,
+            "charset": "utf8mb4",
+            "autocommit": False,
+            "cursorclass": pymysql_module.cursors.DictCursor,
+        }
+        if self._ssl_ca != "":
+            arguments["ssl_ca"] = self._ssl_ca
+            arguments["ssl_verify_cert"] = True
+            arguments["ssl_verify_identity"] = True
         try:
-            raw = pymysql_module.connect(
-                host=self._host,
-                port=self._port,
-                user=self._user,
-                password=self._password,
-                database=self._database,
-                charset="utf8mb4",
-                autocommit=False,
-                cursorclass=pymysql_module.cursors.DictCursor,
-            )
+            raw = pymysql_module.connect(**arguments)
         except pymysql_module.err.Error as exc:
             raise StorageError() from exc
         return MysqlConnection(raw)

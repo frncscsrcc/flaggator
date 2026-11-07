@@ -41,6 +41,7 @@ class Settings:
     mysql_database: str
     mysql_user: str
     mysql_password: str
+    mysql_ssl_ca: str
     cache: str
     bind_host: str
     bind_port: int
@@ -63,6 +64,7 @@ class Settings:
             f"engine={self.engine!r}, sqlite_path={self.sqlite_path!r}, "
             f"mysql_host={self.mysql_host!r}, mysql_port={self.mysql_port!r}, "
             f"mysql_database={self.mysql_database!r}, mysql_user={self.mysql_user!r}, "
+            f"mysql_ssl_ca={self.mysql_ssl_ca!r}, "
             f"cache={self.cache!r}, bind_host={self.bind_host!r}, "
             f"bind_port={self.bind_port!r}, eval_ttl_seconds={self.eval_ttl_seconds!r}, "
             f"jwt_issuer={self.jwt_issuer!r}, jwt_audience={self.jwt_audience!r}, "
@@ -108,6 +110,7 @@ def load_settings(environment: Mapping[str, str] | None = None) -> Settings:
         mysql_database=source.get("FLAGGATOR_MYSQL_DATABASE", "flaggator"),
         mysql_user=source.get("FLAGGATOR_MYSQL_USER", ""),
         mysql_password=source.get("FLAGGATOR_MYSQL_PASSWORD", ""),
+        mysql_ssl_ca=_mysql_ssl_ca(source.get("FLAGGATOR_MYSQL_SSL_CA", "")),
         cache=source.get("FLAGGATOR_CACHE", "memory"),
         bind_host=source.get("FLAGGATOR_BIND_HOST", "127.0.0.1"),
         bind_port=_port(source.get("FLAGGATOR_BIND_PORT", "8080"), "bind_port"),
@@ -153,6 +156,7 @@ def build_database(settings: Settings) -> Database:
             database=settings.mysql_database,
             user=settings.mysql_user,
             password=settings.mysql_password,
+            ssl_ca=settings.mysql_ssl_ca,
         )
     raise ValidationError(
         "The database engine is not supported.",
@@ -311,6 +315,28 @@ def _trusted_proxies(raw: str) -> tuple[ipaddress.IPv4Network | ipaddress.IPv6Ne
                 ],
             ) from exc
     return tuple(networks)
+
+
+def _mysql_ssl_ca(raw: str) -> str:
+    """Return the CA path, or empty when MySQL stays on a cleartext session.
+
+    A non-empty path must be a readable file. Raises ValidationError
+    otherwise. Does not connect and does not read the file into memory.
+    """
+    if raw == "":
+        return ""
+    path = Path(raw)
+    if not path.is_file() or not os.access(path, os.R_OK):
+        raise ValidationError(
+            "The MySQL CA file cannot be read.",
+            details=[
+                {
+                    "field": "mysql_ssl_ca",
+                    "message": "FLAGGATOR_MYSQL_SSL_CA must be a readable file.",
+                }
+            ],
+        )
+    return raw
 
 
 def _jwt_ttl_seconds(raw: str) -> int:

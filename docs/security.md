@@ -196,7 +196,7 @@ The default install uses the standard library plus JWT libraries: `sqlite3`, `ht
 
 **PyJWT** signs local HS256 tokens and verifies HS256 or IdP JWKS tokens (`domain/jwt.py`). The `crypto` extra pulls in **cryptography** so RS*/ES* JWKS verification works. Reason: prefer a known JWT stack over hand-rolled serialization and key handling. Licenses are MIT-compatible with flaggator.
 
-MySQL adds PyMySQL as an optional extra ([P3](decisions.md)). It is imported only by the MySQL database module. The reason: the standard library has no MySQL driver. License: MIT.
+MySQL adds PyMySQL as an optional extra ([P3](decisions.md)). It is imported only by the MySQL database module. The reason: the standard library has no MySQL driver. License: MIT. `FLAGGATOR_MYSQL_SSL_CA`, when set to a readable CA file, turns on certificate and hostname verification. Empty leaves the session cleartext, which is acceptable only on a trusted network. `users.email` uses `utf8mb4_bin`, so the unique key compares bytes the way SQLite does.
 
 No ORM, no query builder, and no web framework are part of that policy ([A3](decisions.md), [A4](decisions.md)).
 
