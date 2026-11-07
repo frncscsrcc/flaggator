@@ -2,6 +2,8 @@
 
 flaggator is an open-source feature-flag service meant to run on your own machine. The HTTP API is the product: a local process serves it, and every behavior the service offers is available through that API.
 
+The latest security review is the [2026-11-07 audit](security_audit/2026-11-07.md).
+
 The documents in `docs/` specify the HTTP contract, the schema, and the evaluation algorithm. The run section starts a local process that serves the implemented routes.
 
 The domain will feel familiar to anyone who has used a hosted feature-flag product. The HTTP contract, the schema, and the evaluation algorithm are ours. They are specified in these documents so a later client can implement the same rules.
