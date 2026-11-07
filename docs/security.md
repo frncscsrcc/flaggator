@@ -90,6 +90,8 @@ Each environment has `protected` (default false). Changing `protected`, or writi
 | Management tokens GET | yes | yes | yes | yes | yes | no |
 | Management tokens revoke | no | no | yes | yes | yes | no |
 | Audit GET | yes | yes | yes | yes | yes | no |
+| `GET /v1/audit` | yes | yes | yes | yes | yes | no |
+| `POST /v1/auth/logout` | any user JWT | any user JWT | any user JWT | any user JWT | no | no |
 | Evaluate / evaluate-all / evaluation-config | no | no | no | no | yes | own env |
 | Issue or rotate `client_id` | no | non-protected env | yes | yes | yes | no |
 | Change flag `public` | no | project with no protected env | yes | yes | yes | no |
@@ -101,7 +103,7 @@ Each environment has `protected` (default false). Changing `protected`, or writi
 
 Authentication attaches a principal before the controller runs.
 
-**Coarse gate** (route authorize): SDK tokens may continue only on evaluation paths; user JWTs need at least `reader`, `writer`, or `admin` for management paths; opaque management tokens may continue.
+**Coarse gate** (route authorize): SDK tokens may continue only on evaluation paths; user JWTs need at least `reader`, `writer`, or `admin` for management paths, except `POST /v1/auth/logout`, which any user JWT may call; opaque management tokens may continue.
 
 **Fine checks** (domain services): `require_reader`, `require_writer`, `require_admin`, and `require_protected_write(environment)` read `principal.roles` and, when needed, `environment.protected` from SQL. The controller does not load whether an environment is protected. Controllers do not call repositories ([Architecture](architecture.md)).
 
@@ -170,6 +172,7 @@ Evaluation walks prerequisites with a visited set and a depth cap, specified in 
 | Segments per environment | 200 |
 | Prerequisite depth | 10 |
 | Prerequisites per configuration | 20 |
+| Environment evaluation bundle | 8 MiB |
 | Targets per configuration (total subjects) | 1000 |
 | Subjects per segment | 1000 |
 | Segments cited by one variation | 20 |
@@ -184,6 +187,7 @@ Exceeding a limit is `ValidationError` (400), not a truncated write.
 - 404 is for management reads of missing projects, environments, flags, and segments.
 - Evaluation of a missing flag returns the caller-supplied default with reason `flag_not_found` ([Domain](domain.md)). It does not echo other flags.
 - 500 messages do not include exception text from the database driver.
+- 503 `unavailable` is the same message on every route when the process has no free reader slot or work slot. The body does not include exception text.
 - Stack traces stay on the server's stderr, not in the JSON body.
 
 ## Database

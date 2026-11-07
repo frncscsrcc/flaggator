@@ -6,7 +6,8 @@ info:
     HTTP API for the flaggator feature-flag service. This file lists the
     routes the process serves. docs/api.md is the design contract for routes
     that are not implemented yet. Update this file in the same change as a
-    route, a request body, or a response body.
+    route, a request body, or a response body. When no reader slot or work
+    slot is free, every route answers 503 with code unavailable.
 
 servers:
   - url: http://127.0.0.1:8080
@@ -40,6 +41,8 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/Health"
+        "503":
+          $ref: "#/components/responses/Unavailable"
   /login.html:
     get:
       tags: [Console]
@@ -59,6 +62,8 @@ paths:
                 type: string
         "404":
           $ref: "#/components/responses/NotFound"
+        "503":
+          $ref: "#/components/responses/Unavailable"
   /styles.css:
     get:
       tags: [Console]
@@ -75,6 +80,8 @@ paths:
                 type: string
         "404":
           $ref: "#/components/responses/NotFound"
+        "503":
+          $ref: "#/components/responses/Unavailable"
   /login.js:
     get:
       tags: [Console]
@@ -91,6 +98,8 @@ paths:
                 type: string
         "404":
           $ref: "#/components/responses/NotFound"
+        "503":
+          $ref: "#/components/responses/Unavailable"
   /api.js:
     get:
       tags: [Console]
@@ -109,6 +118,8 @@ paths:
                 type: string
         "404":
           $ref: "#/components/responses/NotFound"
+        "503":
+          $ref: "#/components/responses/Unavailable"
   /session.js:
     get:
       tags: [Console]
@@ -127,6 +138,8 @@ paths:
                 type: string
         "404":
           $ref: "#/components/responses/NotFound"
+        "503":
+          $ref: "#/components/responses/Unavailable"
   /logo.png:
     get:
       tags: [Console]
@@ -144,6 +157,8 @@ paths:
                 format: binary
         "404":
           $ref: "#/components/responses/NotFound"
+        "503":
+          $ref: "#/components/responses/Unavailable"
   /v1/auth/login:
     post:
       tags: [Auth]
@@ -181,6 +196,8 @@ paths:
           $ref: "#/components/responses/MethodNotAllowed"
         "429":
           $ref: "#/components/responses/RateLimited"
+        "503":
+          $ref: "#/components/responses/Unavailable"
         "500":
           $ref: "#/components/responses/StorageError"
   /v1/auth/logout:
@@ -203,6 +220,8 @@ paths:
           $ref: "#/components/responses/Forbidden"
         "405":
           $ref: "#/components/responses/MethodNotAllowed"
+        "503":
+          $ref: "#/components/responses/Unavailable"
         "500":
           $ref: "#/components/responses/StorageError"
   /v1/audit:
@@ -244,6 +263,8 @@ paths:
           $ref: "#/components/responses/Forbidden"
         "405":
           $ref: "#/components/responses/MethodNotAllowed"
+        "503":
+          $ref: "#/components/responses/Unavailable"
         "500":
           $ref: "#/components/responses/StorageError"
   /v1/management-tokens:
@@ -267,6 +288,8 @@ paths:
           $ref: "#/components/responses/Forbidden"
         "405":
           $ref: "#/components/responses/MethodNotAllowed"
+        "503":
+          $ref: "#/components/responses/Unavailable"
         "500":
           $ref: "#/components/responses/StorageError"
   /v1/management-tokens/{tokenId}:
@@ -291,6 +314,8 @@ paths:
           $ref: "#/components/responses/NotFound"
         "405":
           $ref: "#/components/responses/MethodNotAllowed"
+        "503":
+          $ref: "#/components/responses/Unavailable"
         "500":
           $ref: "#/components/responses/StorageError"
   /v1/users:
@@ -322,6 +347,8 @@ paths:
           $ref: "#/components/responses/Forbidden"
         "405":
           $ref: "#/components/responses/MethodNotAllowed"
+        "503":
+          $ref: "#/components/responses/Unavailable"
         "500":
           $ref: "#/components/responses/StorageError"
     post:
@@ -329,8 +356,9 @@ paths:
       summary: Create a user
       operationId: createUser
       description: |
-        Requires admin. password may be omitted for an IdP-only user. roles
-        is a non-empty list drawn from reader, writer, protected_writer, and
+        Requires admin. password may be omitted for an IdP-only user. A
+        password that is sent must be 12 to 1024 characters. roles is a
+        non-empty list drawn from reader, writer, protected_writer, and
         admin. An admin may assign any of those roles.
       requestBody:
         required: true
@@ -355,6 +383,8 @@ paths:
           $ref: "#/components/responses/MethodNotAllowed"
         "409":
           $ref: "#/components/responses/Conflict"
+        "503":
+          $ref: "#/components/responses/Unavailable"
         "500":
           $ref: "#/components/responses/StorageError"
   /v1/users/{userId}:
@@ -379,6 +409,8 @@ paths:
           $ref: "#/components/responses/NotFound"
         "405":
           $ref: "#/components/responses/MethodNotAllowed"
+        "503":
+          $ref: "#/components/responses/Unavailable"
         "500":
           $ref: "#/components/responses/StorageError"
     patch:
@@ -387,8 +419,10 @@ paths:
       operationId: patchUser
       description: |
         Requires admin. Updates name, password, roles, and/or disabled.
-        Email cannot change. disabled true sets disabled_at; false clears it.
-        An admin may assign any role.
+        Email cannot change. A new password must be 12 to 1024 characters.
+        Replacing the password increments token generation, so every local
+        session for that user stops matching. disabled true sets disabled_at;
+        false clears it. An admin may assign any role.
       parameters:
         - $ref: "#/components/parameters/UserId"
       requestBody:
@@ -414,6 +448,8 @@ paths:
           $ref: "#/components/responses/NotFound"
         "405":
           $ref: "#/components/responses/MethodNotAllowed"
+        "503":
+          $ref: "#/components/responses/Unavailable"
         "500":
           $ref: "#/components/responses/StorageError"
   /v1/projects:
@@ -445,6 +481,8 @@ paths:
           $ref: "#/components/responses/Forbidden"
         "405":
           $ref: "#/components/responses/MethodNotAllowed"
+        "503":
+          $ref: "#/components/responses/Unavailable"
         "500":
           $ref: "#/components/responses/StorageError"
     post:
@@ -474,6 +512,8 @@ paths:
           $ref: "#/components/responses/MethodNotAllowed"
         "409":
           $ref: "#/components/responses/Conflict"
+        "503":
+          $ref: "#/components/responses/Unavailable"
         "500":
           $ref: "#/components/responses/StorageError"
   /v1/projects/{projectKey}:
@@ -498,6 +538,8 @@ paths:
           $ref: "#/components/responses/NotFound"
         "405":
           $ref: "#/components/responses/MethodNotAllowed"
+        "503":
+          $ref: "#/components/responses/Unavailable"
         "500":
           $ref: "#/components/responses/StorageError"
   /v1/projects/{projectKey}/audit:
@@ -547,6 +589,8 @@ paths:
           $ref: "#/components/responses/NotFound"
         "405":
           $ref: "#/components/responses/MethodNotAllowed"
+        "503":
+          $ref: "#/components/responses/Unavailable"
         "500":
           $ref: "#/components/responses/StorageError"
   /v1/projects/{projectKey}/environments:
@@ -575,6 +619,8 @@ paths:
           $ref: "#/components/responses/NotFound"
         "405":
           $ref: "#/components/responses/MethodNotAllowed"
+        "503":
+          $ref: "#/components/responses/Unavailable"
         "500":
           $ref: "#/components/responses/StorageError"
     post:
@@ -584,7 +630,8 @@ paths:
       description: |
         Does not copy targeting from another environment. Each flag already
         in the project gets a disabled configuration with off variation 0
-        and fallthrough variation 0.
+        and fallthrough variation 0. A result whose evaluation bundle would
+        exceed 8 MiB is 400 and is not stored.
       parameters:
         - $ref: "#/components/parameters/ProjectKey"
       requestBody:
@@ -612,6 +659,8 @@ paths:
           $ref: "#/components/responses/MethodNotAllowed"
         "409":
           $ref: "#/components/responses/Conflict"
+        "503":
+          $ref: "#/components/responses/Unavailable"
         "500":
           $ref: "#/components/responses/StorageError"
   /v1/projects/{projectKey}/environments/{environmentKey}:
@@ -622,7 +671,9 @@ paths:
       description: |
         Updates name and/or protected. The environment key cannot be changed.
         Changing protected later requires writer and protected_writer; opaque
-        management tokens already have full access.
+        management tokens already have full access. Setting protected to true
+        clears client_id in the same write. Public flags on that environment
+        are exposed again only when a new client_id is issued.
       parameters:
         - $ref: "#/components/parameters/ProjectKey"
         - $ref: "#/components/parameters/EnvironmentKey"
@@ -649,6 +700,8 @@ paths:
           $ref: "#/components/responses/NotFound"
         "405":
           $ref: "#/components/responses/MethodNotAllowed"
+        "503":
+          $ref: "#/components/responses/Unavailable"
         "500":
           $ref: "#/components/responses/StorageError"
   /v1/projects/{projectKey}/environments/{environmentKey}/client-id:
@@ -679,6 +732,8 @@ paths:
           $ref: "#/components/responses/NotFound"
         "405":
           $ref: "#/components/responses/MethodNotAllowed"
+        "503":
+          $ref: "#/components/responses/Unavailable"
         "500":
           $ref: "#/components/responses/StorageError"
   /v1/projects/{projectKey}/flags:
@@ -713,6 +768,8 @@ paths:
           $ref: "#/components/responses/NotFound"
         "405":
           $ref: "#/components/responses/MethodNotAllowed"
+        "503":
+          $ref: "#/components/responses/Unavailable"
         "500":
           $ref: "#/components/responses/StorageError"
     post:
@@ -721,7 +778,9 @@ paths:
       operationId: createFlag
       description: |
         Stores the variations in array order, starting at index 0, and a
-        disabled configuration in every existing environment.
+        disabled configuration in every existing environment. A result that
+        would leave any environment bundle over 8 MiB is 400 and is rolled
+        back.
       parameters:
         - $ref: "#/components/parameters/ProjectKey"
       requestBody:
@@ -749,6 +808,8 @@ paths:
           $ref: "#/components/responses/MethodNotAllowed"
         "409":
           $ref: "#/components/responses/Conflict"
+        "503":
+          $ref: "#/components/responses/Unavailable"
         "500":
           $ref: "#/components/responses/StorageError"
   /v1/projects/{projectKey}/flags/{flagKey}:
@@ -774,6 +835,8 @@ paths:
           $ref: "#/components/responses/NotFound"
         "405":
           $ref: "#/components/responses/MethodNotAllowed"
+        "503":
+          $ref: "#/components/responses/Unavailable"
         "500":
           $ref: "#/components/responses/StorageError"
     patch:
@@ -785,6 +848,11 @@ paths:
         ordered list and must start with the stored variations. Values after
         that prefix are appended. A shorter list, a different prefix, or a
         key field is 400. Existing environment configurations keep their indexes.
+        Appending variations is 400 when any environment bundle would exceed
+        8 MiB. Turning public on is 400 while the flag still reaches a private
+        flag. Turning public off is 400 while a public flag still reaches this
+        one. A project with a protected environment needs protected_writer to
+        change public.
       parameters:
         - $ref: "#/components/parameters/ProjectKey"
         - $ref: "#/components/parameters/FlagKey"
@@ -811,6 +879,8 @@ paths:
           $ref: "#/components/responses/NotFound"
         "405":
           $ref: "#/components/responses/MethodNotAllowed"
+        "503":
+          $ref: "#/components/responses/Unavailable"
         "500":
           $ref: "#/components/responses/StorageError"
   /v1/projects/{projectKey}/flags/{flagKey}/environments/{environmentKey}:
@@ -841,6 +911,8 @@ paths:
           $ref: "#/components/responses/NotFound"
         "405":
           $ref: "#/components/responses/MethodNotAllowed"
+        "503":
+          $ref: "#/components/responses/Unavailable"
         "500":
           $ref: "#/components/responses/StorageError"
     put:
@@ -854,6 +926,9 @@ paths:
         the service assigns the id. Send a stored id to keep that rule. Omit
         a rollout salt to keep the stored salt, or to have one assigned for
         a new rollout. Sending a different salt reshuffles that rollout.
+        More than 20 prerequisites, a cycle, or a result whose bundle would
+        exceed 8 MiB is 400. A public flag may list only public prerequisites,
+        and each of those must itself reach only public flags.
       parameters:
         - $ref: "#/components/parameters/ProjectKey"
         - $ref: "#/components/parameters/FlagKey"
@@ -892,6 +967,8 @@ paths:
                   code: conflict
                   message: The configuration version is stale.
                   details: []
+        "503":
+          $ref: "#/components/responses/Unavailable"
         "500":
           $ref: "#/components/responses/StorageError"
   /v1/projects/{projectKey}/environments/{environmentKey}/segments:
@@ -921,12 +998,17 @@ paths:
           $ref: "#/components/responses/NotFound"
         "405":
           $ref: "#/components/responses/MethodNotAllowed"
+        "503":
+          $ref: "#/components/responses/Unavailable"
         "500":
           $ref: "#/components/responses/StorageError"
     post:
       tags: [Segments]
       summary: Create a segment
       operationId: createSegment
+      description: |
+        A result whose environment bundle would exceed 8 MiB is 400 and is
+        not stored.
       parameters:
         - $ref: "#/components/parameters/ProjectKey"
         - $ref: "#/components/parameters/EnvironmentKey"
@@ -964,6 +1046,8 @@ paths:
                   code: conflict
                   message: Segment key already exists.
                   details: []
+        "503":
+          $ref: "#/components/responses/Unavailable"
         "500":
           $ref: "#/components/responses/StorageError"
   /v1/projects/{projectKey}/environments/{environmentKey}/segments/{segmentKey}:
@@ -990,13 +1074,18 @@ paths:
           $ref: "#/components/responses/NotFound"
         "405":
           $ref: "#/components/responses/MethodNotAllowed"
+        "503":
+          $ref: "#/components/responses/Unavailable"
         "500":
           $ref: "#/components/responses/StorageError"
     put:
       tags: [Segments]
       summary: Replace a segment
       operationId: replaceSegment
-      description: Replaces name and subjects. The key in the path does not change. The environment evaluation bundle is dropped after commit.
+      description: |
+        Replaces name and subjects. The key in the path does not change.
+        The environment evaluation bundle is dropped after commit. A result
+        whose bundle would exceed 8 MiB is 400 and is rolled back.
       parameters:
         - $ref: "#/components/parameters/ProjectKey"
         - $ref: "#/components/parameters/EnvironmentKey"
@@ -1024,6 +1113,8 @@ paths:
           $ref: "#/components/responses/NotFound"
         "405":
           $ref: "#/components/responses/MethodNotAllowed"
+        "503":
+          $ref: "#/components/responses/Unavailable"
         "500":
           $ref: "#/components/responses/StorageError"
     delete:
@@ -1057,6 +1148,8 @@ paths:
                   code: conflict
                   message: Segment is still referenced.
                   details: []
+        "503":
+          $ref: "#/components/responses/Unavailable"
         "500":
           $ref: "#/components/responses/StorageError"
   /v1/projects/{projectKey}/environments/{environmentKey}/sdk-tokens:
@@ -1083,6 +1176,8 @@ paths:
           $ref: "#/components/responses/NotFound"
         "405":
           $ref: "#/components/responses/MethodNotAllowed"
+        "503":
+          $ref: "#/components/responses/Unavailable"
         "500":
           $ref: "#/components/responses/StorageError"
     post:
@@ -1130,6 +1225,8 @@ paths:
                   code: conflict
                   message: SDK token name already exists.
                   details: []
+        "503":
+          $ref: "#/components/responses/Unavailable"
         "500":
           $ref: "#/components/responses/StorageError"
   /v1/projects/{projectKey}/environments/{environmentKey}/sdk-tokens/{id}:
@@ -1157,6 +1254,8 @@ paths:
           $ref: "#/components/responses/NotFound"
         "405":
           $ref: "#/components/responses/MethodNotAllowed"
+        "503":
+          $ref: "#/components/responses/Unavailable"
         "500":
           $ref: "#/components/responses/StorageError"
   /v1/projects/{projectKey}/environments/{environmentKey}/evaluation-config:
@@ -1186,6 +1285,8 @@ paths:
           $ref: "#/components/responses/NotFound"
         "405":
           $ref: "#/components/responses/MethodNotAllowed"
+        "503":
+          $ref: "#/components/responses/Unavailable"
         "500":
           $ref: "#/components/responses/StorageError"
   /v1/evaluate:
@@ -1219,6 +1320,8 @@ paths:
           $ref: "#/components/responses/Forbidden"
         "405":
           $ref: "#/components/responses/MethodNotAllowed"
+        "503":
+          $ref: "#/components/responses/Unavailable"
         "500":
           $ref: "#/components/responses/StorageError"
   /v1/evaluate-all:
@@ -1250,6 +1353,8 @@ paths:
           $ref: "#/components/responses/Forbidden"
         "405":
           $ref: "#/components/responses/MethodNotAllowed"
+        "503":
+          $ref: "#/components/responses/Unavailable"
         "500":
           $ref: "#/components/responses/StorageError"
   /v1/client-evaluate:
@@ -1260,15 +1365,16 @@ paths:
       security: []
       description: |
         No bearer token. client_id selects the environment. The server
-        evaluates that environment's bundle, including private flags used as
-        prerequisites, and returns only flags with public true. Each item is
-        key, value, and variation_index, ordered by key. Rules, salts, segment
-        members, reason, rule_id, and version are omitted. An unknown
-        client_id is 404. A known environment with no public flags is 200 and
-        an empty list. The context is not stored. More than
-        FLAGGATOR_CLIENT_EVAL_LIMIT requests (default 60) in
-        FLAGGATOR_CLIENT_EVAL_WINDOW_SECONDS (default 60) from one client
-        address is 429. The limit is per process.
+        returns flags with public true, ordered by key. Each item is key,
+        value, and variation_index. A public flag whose prerequisite closure
+        in this environment contains a private flag is omitted; the caller
+        uses its own default. Rules, salts, segment members, reason, rule_id,
+        and version are omitted. Targets and segments of a flag that is
+        returned stay observable. An unknown client_id is 404. A known
+        environment with no public flags is 200 and an empty list. The
+        context is not stored. More than FLAGGATOR_CLIENT_EVAL_LIMIT
+        requests (default 60) in FLAGGATOR_CLIENT_EVAL_WINDOW_SECONDS
+        (default 60) from one client address is 429. The limit is per process.
       requestBody:
         required: true
         content:
@@ -1290,6 +1396,8 @@ paths:
           $ref: "#/components/responses/MethodNotAllowed"
         "429":
           $ref: "#/components/responses/RateLimited"
+        "503":
+          $ref: "#/components/responses/Unavailable"
         "500":
           $ref: "#/components/responses/StorageError"
 components:
@@ -1458,7 +1566,10 @@ components:
               message: This route accepts GET.
               details: []
     RateLimited:
-      description: Too many attempts on a public route from this client address.
+      description: |
+        Too many login attempts from one client address, the 10th failed
+        login for one email in 60 seconds, or too many client-evaluate
+        requests from one client address.
       content:
         application/json:
           schema:
@@ -1467,6 +1578,19 @@ components:
             error:
               code: rate_limited
               message: Too many attempts. Wait and try again.
+              details: []
+    Unavailable:
+      description: |
+        No free reader slot or work slot. The same document is returned on
+        every route, including before the request body is read.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+          example:
+            error:
+              code: unavailable
+              message: The server is busy.
               details: []
     StorageError:
       description: The database failed. The message does not include driver text.
@@ -1517,6 +1641,8 @@ components:
                 - forbidden
                 - not_found
                 - conflict
+                - rate_limited
+                - unavailable
                 - storage_error
             message:
               type: string
@@ -1704,9 +1830,9 @@ components:
           $ref: "#/components/schemas/DisplayName"
         password:
           type: string
-          minLength: 8
+          minLength: 12
           maxLength: 1024
-          description: Omit for an IdP-only user.
+          description: Omit for an IdP-only user. 12 to 1024 characters when set.
         roles:
           type: array
           minItems: 1
@@ -1721,8 +1847,9 @@ components:
           $ref: "#/components/schemas/DisplayName"
         password:
           type: string
-          minLength: 8
+          minLength: 12
           maxLength: 1024
+          description: 12 to 1024 characters. Replacing it ends every local session for this user.
         roles:
           type: array
           minItems: 1
@@ -1747,7 +1874,8 @@ components:
           nullable: true
           description: |
             Opaque id a browser sends to client-evaluate. Null until an
-            operator issues one. Not a secret.
+            operator issues one, and cleared when the environment is patched
+            to protected. Not a secret.
     EnvironmentPage:
       type: object
       required: [items, next_cursor]
