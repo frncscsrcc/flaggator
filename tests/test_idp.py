@@ -99,17 +99,45 @@ class IdpTests(unittest.TestCase):
         self.assertEqual(status, "401 Unauthorized")
         self.assertEqual(body["error"]["code"], "unauthenticated")
 
-    def _idp_token(self, email: str, sub: str) -> str:
-        """Return an RS256 JWT signed by the stub IdP key."""
+    def test_idp_requires_boolean_email_verified(self) -> None:
+        """Only the boolean true verifies the email. sub is not an email."""
+        self._insert_user("ops@example.com", '["reader"]')
+        missing = self._idp_token(email="ops@example.com", sub="idp", verified=None)
+        as_string = self._idp_token(email="ops@example.com", sub="idp", verified="true")
+        denied = self._idp_token(email="ops@example.com", sub="idp", verified=False)
+        by_sub = self._idp_token(email=None, sub="ops@example.com", verified=True)
+        missing_status, _missing_body = self._call("GET", "/v1/projects", missing)
+        string_status, _string_body = self._call("GET", "/v1/projects", as_string)
+        denied_status, _denied_body = self._call("GET", "/v1/projects", denied)
+        sub_status, _sub_body = self._call("GET", "/v1/projects", by_sub)
+        self.assertEqual(missing_status, "401 Unauthorized")
+        self.assertEqual(string_status, "401 Unauthorized")
+        self.assertEqual(denied_status, "401 Unauthorized")
+        self.assertEqual(sub_status, "401 Unauthorized")
+
+    def _idp_token(
+        self,
+        email: str | None,
+        sub: str,
+        verified: object = True,
+    ) -> str:
+        """Return an RS256 JWT signed by the stub IdP key.
+
+        verified None omits email_verified. email None omits the email claim.
+        """
+        claims: dict[str, object] = {
+            "sub": sub,
+            "iss": _ISSUER,
+            "aud": _AUDIENCE,
+            "iat": 1_700_000_000,
+            "exp": 2_000_000_000,
+        }
+        if email is not None:
+            claims["email"] = email
+        if verified is not None:
+            claims["email_verified"] = verified
         return jwt.encode(
-            {
-                "sub": sub,
-                "email": email,
-                "iss": _ISSUER,
-                "aud": _AUDIENCE,
-                "iat": 1_700_000_000,
-                "exp": 2_000_000_000,
-            },
+            claims,
             self._private_key,
             algorithm="RS256",
             headers={"kid": self._kid},

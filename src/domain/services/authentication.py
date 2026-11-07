@@ -100,9 +100,10 @@ def _load_user(connection: Connection, payload: dict, algorithm: str) -> UserRow
     An HS256 token is one this process signed, so a decimal sub is the
     local user id. Its gen claim must equal that row's token_generation.
     A missing or different gen is the same miss as an unknown token. A
-    JWKS token matches the normalized email claim, or a sub that itself
-    contains @, and is not checked for gen. A numeric sub on an IdP token
-    is ignored. Returns None when nothing matches.
+    JWKS token matches the normalized email claim only when email_verified
+    is the boolean true. A string, false, or a missing claim does not match,
+    and sub is not an email. The token is not checked for gen. Returns None
+    when nothing matches.
     """
     if algorithm == "HS256":
         sub = payload.get("sub")
@@ -112,12 +113,11 @@ def _load_user(connection: Connection, payload: dict, algorithm: str) -> UserRow
         if user is None or not _generation_matches(payload.get("gen"), user.token_generation):
             return None
         return user
+    if payload.get("email_verified") is not True:
+        return None
     email = payload.get("email")
     if isinstance(email, str) and email.strip() != "":
         return find_enabled_user_by_email(connection, email.strip().lower())
-    sub = payload.get("sub")
-    if isinstance(sub, str) and "@" in sub:
-        return find_enabled_user_by_email(connection, sub.strip().lower())
     return None
 
 
